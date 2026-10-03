@@ -150,17 +150,17 @@ class Host:
                     directory = Path(old["output_dir"])
                     try:
                         payload = json.loads((directory / "transcript.json").read_text(encoding="utf-8"))
-                        meta = payload["metadata"]
-                        if (directory.is_relative_to(self.output / safe_name(source.course) / "script")
-                                and all((directory / f).is_file() for f in ("transcript.txt", "subtitles.srt", "subtitles.vtt"))
-                                and all(Path(meta[k]).is_file() for k in ("media_path", "audio_path"))):
+                        if (directory.resolve().is_relative_to((self.output / safe_name(source.course) / "script").resolve())
+                                and payload.get("segments")
+                                and all((directory / f).is_file() for f in (
+                                    "transcript.txt", "transcript.md", "subtitles.srt", "subtitles.vtt", "transcript.original.json"))):
                             result = {"directory": str(directory)}
                     except (OSError, ValueError, KeyError):
                         pass
                 if result is None:
                     result = process_source(source, options, engine, cancel, report, self.store)
                 self.send({**base, "type": "complete", "status": "complete", "progress": 100,
-                           "label": "영상 · 음성 · 스크립트 저장 완료", "directory": result["directory"]})
+                           "label": "스크립트·자막 저장 완료", "directory": result["directory"]})
             except Cancelled:
                 self.send({**base, "type": "cancelled", "status": "cancelled", "label": "중단됨 · 저장된 영상과 음성은 유지됩니다."})
             except Exception as error:

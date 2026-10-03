@@ -67,7 +67,7 @@ class Window(QMainWindow):
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
         layout = QVBoxLayout(root); layout.setContentsMargins(28, 24, 28, 24); layout.setSpacing(14)
         title = QLabel("강의 창에서, 스크립트까지."); title.setObjectName("heading"); layout.addWidget(title)
-        subtitle = QLabel("동영상 다운로드  →  음성 추출  →  자막 스크립트 생성"); subtitle.setObjectName("muted"); layout.addWidget(subtitle)
+        subtitle = QLabel("동영상 다운로드  →  음성 추출  →  자막 스크립트 생성  →  처리용 파일 삭제"); subtitle.setObjectName("muted"); layout.addWidget(subtitle)
         banner = QLabel("크롬에서 한성 eClass 강의 동영상 창을 열면 자동으로 시작합니다.\n확장 설치 후에는 이 앱을 켜두지 않아도 됩니다. 진행 상황은 크롬 확장 아이콘에서 확인하세요.")
         banner.setObjectName("banner"); banner.setWordWrap(True); layout.addWidget(banner)
         actions = QHBoxLayout()
@@ -75,7 +75,7 @@ class Window(QMainWindow):
         actions.addWidget(button("확장 폴더 열기", lambda: self.open_path(ROOT / "extension")))
         actions.addWidget(button("저장 폴더 열기", self.open_output))
         actions.addStretch(); layout.addLayout(actions)
-        folder = QLabel(str(self.output) + " / 과목명 / video · audio · script")
+        folder = QLabel(str(self.output) + " / 과목명 / script · 완료 후 영상·음성 자동 삭제")
         folder.setObjectName("muted"); folder.setWordWrap(True); folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(folder)
         local = QHBoxLayout()
@@ -156,7 +156,7 @@ class Window(QMainWindow):
         self.snapshot = records; self.records = records
         self.table.blockSignals(True); self.table.setRowCount(len(records))
         labels = {"complete": "완료", "running": "처리 중", "downloading": "1/3 영상 다운로드", "extracting": "2/3 음성 추출",
-                  "transcribing": "3/3 스크립트 생성", "cancelled": "중단", "failed": "실패", "interrupted": "중단됨", "audio_ready": "이전 음원"}
+                  "transcribing": "3/3 스크립트 생성", "cleaning": "처리용 파일 정리", "cancelled": "중단", "failed": "실패", "interrupted": "중단됨", "audio_ready": "이전 음원"}
         for row, record in enumerate(records):
             for column, value in enumerate((record["title"], labels.get(record["status"], record["status"]),
                                             record.get("error") or record.get("detail") or "")):

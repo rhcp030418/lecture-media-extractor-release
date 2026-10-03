@@ -1,10 +1,10 @@
 # Lecture Media Extractor
 
-Lecture Media Extractor downloads lecture videos, extracts audio, and creates transcripts. The automatic Windows/Chrome workflow is based on Lecture Script 0.3. The existing URL sniffer and Python CLI are also available.
+Lecture Media Extractor downloads lecture videos, extracts audio, and creates transcripts, then deletes the intermediate video and audio after successful export. The automatic Windows/Chrome workflow is based on Lecture Script 0.3. The existing URL sniffer and Python CLI are also available.
 
 ## 자동 처리: 강의 창을 열면 영상 → 음성 → 자막 저장
 
-Windows와 Chrome에서 한성 eClass 강의 창을 열면 **동영상 다운로드 → 음성 추출 → 자막 스크립트 생성**을 자동으로 진행합니다.
+Windows와 Chrome에서 한성 eClass 강의 창을 열면 **동영상 다운로드 → 음성 추출 → 자막 스크립트 생성 → 처리용 영상·음성 삭제**를 자동으로 진행합니다.
 
 ### 처음 설치
 
@@ -21,10 +21,11 @@ Windows와 Chrome에서 한성 eClass 강의 창을 열면 **동영상 다운로
 ### 사용 및 저장 위치
 
 - 확장 아이콘에서 진행 상황, 자동 실행 설정, **현재 영상 시작 / 재시도**, **중단**, **저장 폴더 열기**를 사용할 수 있습니다.
-- 영상, WAV 음성, 대본은 Windows에 등록된 **다운로드 폴더/lecture/과목명/** 아래의 `video`, `audio`, `script` 폴더에 저장됩니다.
+- 대본과 자막은 Windows에 등록된 **다운로드 폴더/lecture/과목명/script/** 아래에 저장됩니다.
+- 영상과 WAV 음성은 처리 중에만 보관하고, 대본·자막 저장이 모두 성공하면 자동으로 삭제합니다. 임시 파일도 정리하며, 사용자가 직접 선택한 로컬 원본 파일은 보존합니다.
 - 대본 폴더에는 `transcript.txt`, `transcript.md`, `subtitles.srt`, `subtitles.vtt`, JSON 메타데이터가 생성됩니다.
 - 과목명은 강의 창 또는 그 창을 연 과목 페이지에서 읽습니다. 찾지 못하면 `과목 미지정`에 저장하며, 확장 팝업에서 과목명을 입력하고 재시도할 수 있습니다.
-- 완료된 강의를 다시 열면 기존 결과를 사용합니다. 중단 후 재시도하면 저장된 영상·음성과 완료한 전사 구간을 재사용합니다.
+- 완료된 강의를 다시 열면 영상·음성이 삭제돼 있어도 기존 대본·자막을 사용합니다. **현재 영상 시작 / 재시도**를 누르면 다시 다운로드해 처리합니다. 실패·중단된 작업의 영상·음성과 완료한 전사 구간은 재시도에 사용합니다.
 - **처리 중에는 Chrome을 켜두세요.** 강의 탭이나 확장 팝업은 닫아도 됩니다. Chrome을 완전히 종료하면 처리가 중단됩니다.
 - `start.cmd`로 저장 기록을 확인하거나 내 동영상 파일을 선택해 처리할 수 있습니다. 자동 처리에는 관리 화면을 켜둘 필요가 없습니다.
 

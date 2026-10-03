@@ -189,7 +189,6 @@ class Options:
     model: str = "small"
     device: str = "auto"
     language: str = "ko"
-    keep_media: bool = True
     prefer_subtitles: bool = True
     vocabulary: str = ""
     action: str = "transcribe"
@@ -353,7 +352,7 @@ class Transcriber:
 
 
 def process_source(source, options, transcriber, cancel, progress, store=None):
-    """One job: keep the video, keep its WAV, then produce the transcript."""
+    """Produce the transcript, then remove this job's intermediate media."""
     from PySide6.QtCore import QLockFile
     if source.drm:
         raise ValueError("DRM으로 보호된 영상은 지원하지 않습니다.")
@@ -376,6 +375,28 @@ def process_source(source, options, transcriber, cancel, progress, store=None):
                                  identity, course, stem, directory, work)
     finally:
         lock.unlock()
+
+
+def remove_intermediates(source, output, media, audio, directory, work):
+    """Delete only this job's files, after all transcript exports succeeded."""
+    root = output.resolve()
+    original = Path(source.url).resolve() if source.local else None
+    paths = [path for path in (media, audio) if path is not None]
+    paths.extend(path for path in work.iterdir() if path.is_file() or path.is_symlink())
+    paths.append(directory / "pipeline.json")
+    # Validate every target before deleting any file; never follow a path outside output.
+    for path in [work, *paths]:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or not path.parent.resolve().is_relative_to(root) or resolved == original:
+            raise ValueError("원본 파일 또는 저장 폴더 밖의 파일은 정리할 수 없습니다.")
+    for path in paths:
+        path.unlink(missing_ok=True)
+    # Only remove empty directories; other lectures' files must remain untouched.
+    for folder in [work, *(path.parent for path in (media, audio) if path is not None)]:
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
 
 
 def _process_pipeline(source, options, transcriber, cancel, progress, store,
@@ -415,6 +436,7 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                     pass
             recorded_media = Path(saved.get("media_path", ""))
             if (saved.get("identity") == identity and recorded_media.is_file()
+                    and recorded_media.stem == stem
                     and recorded_media.parent.resolve() == (course / "video").resolve()
                     and recorded_media.stat().st_size == saved.get("media_size")):
                 media = recorded_media
@@ -474,15 +496,18 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                     "model": options.model if origin == "speech_recognition" else None,
                     "device": (transcriber.actual_device or "checkpoint") if origin == "speech_recognition" else None,
                     "compute_type": transcriber.compute_type if origin == "speech_recognition" else None,
-                    "language": options.language, "media_path": str(media.resolve()) if media else "",
-                    "audio_path": str(audio.resolve()) if audio else "", "duration": duration,
+                    "language": options.language, "media_path": "", "audio_path": "",
+                    "duration": duration,
                     "source_host": source.display_location if not source.local else "local"}
         report(95, "3/3 · 대본과 자막 저장 중")
         payload = export_transcript(directory, source.title, segments, metadata)
-        (work / "chunk.wav").unlink(missing_ok=True)
+        check_cancel(cancel)
+        stage = "cleaning"
+        report(98, "대본 저장 완료 · 처리용 영상·음성 정리 중")
+        remove_intermediates(source, options.output, media, audio, directory, work)
         if store:
-            store.update(identity, source.title, "complete", directory, progress=100, detail="영상 · 음성 · 스크립트 저장 완료")
-        progress(100, "영상 · 음성 · 스크립트 저장 완료")
+            store.update(identity, source.title, "complete", directory, progress=100, detail="스크립트·자막 저장 완료 · 처리용 파일 정리 완료")
+        progress(100, "스크립트·자막 저장 완료 · 처리용 파일 정리 완료")
         return {"directory": str(directory), "course_directory": str(course), "payload": payload}
     except Exception as error:
         if store:
