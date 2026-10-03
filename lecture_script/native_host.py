@@ -7,15 +7,12 @@ import queue
 import struct
 import sys
 import threading
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from .browser import Source, media_kind
-from .pipeline import Cancelled, Options, Transcriber, job_identity, process_source, safe_error
+from .pipeline import Cancelled, Options, Transcriber, completed_outputs, job_identity, process_source, safe_error, validate_outputs
 from .storage import DATA, DEFAULT_OUTPUT, JobStore
-from .text import safe_name
 
-HOST_NAME = "kr.lecture_script.pipeline"
 MAX_MESSAGE = 1024 * 1024
 
 
@@ -103,6 +100,7 @@ class Host:
             self.send({"type": "ready", "output": str(self.output)})
         elif command == "start":
             source = source_from_message(message)
+            outputs = validate_outputs(message.get("outputs", ["mp4", "mp3", "script"]))
             identity = job_identity(source)
             with self.guard:
                 if identity in self.jobs:
@@ -114,10 +112,10 @@ class Host:
             model = message.get("model", "small")
             if model not in ("tiny", "small", "medium", "large-v3", "turbo"):
                 model = "small"
-            options = Options(self.output, model=model, prefer_subtitles=False)
+            options = Options(self.output, model=model, prefer_subtitles=False, outputs=outputs)
             self.send({"type": "progress", "request_id": request_id, "job_id": identity,
                        "status": "queued", "progress": 0, "label": "처리 대기 중",
-                       "title": source.title, "course": source.course})
+                       "title": source.title, "course": source.course, "outputs": list(outputs)})
             self.pending.put((source, options, cancel, identity, request_id, bool(message.get("retry"))))
         elif command == "cancel":
             with self.guard:
@@ -144,23 +142,13 @@ class Host:
                 if cancel.is_set():
                     raise Cancelled()
                 # Refreshing the same lecture must not download it again across Chrome sessions.
-                old = next((j for j in self.store.recent() if j["id"] == identity and j["status"] == "complete"), None)
-                result = None
-                if old and not retry:
-                    directory = Path(old["output_dir"])
-                    try:
-                        payload = json.loads((directory / "transcript.json").read_text(encoding="utf-8"))
-                        if (directory.resolve().is_relative_to((self.output / safe_name(source.course) / "script").resolve())
-                                and payload.get("segments")
-                                and all((directory / f).is_file() for f in (
-                                    "transcript.txt", "transcript.md", "subtitles.srt", "subtitles.vtt", "transcript.original.json"))):
-                            result = {"directory": str(directory)}
-                    except (OSError, ValueError, KeyError):
-                        pass
+                result = completed_outputs(source, options) if not retry else None
                 if result is None:
                     result = process_source(source, options, engine, cancel, report, self.store)
+                label = "선택한 파일 저장 완료 · " + " · ".join("스크립트" if kind == "script" else kind.upper() for kind in options.outputs)
+                self.store.update(identity, source.title, "complete", result["directory"], progress=100, detail=label)
                 self.send({**base, "type": "complete", "status": "complete", "progress": 100,
-                           "label": "스크립트·자막 저장 완료", "directory": result["directory"]})
+                           "label": label, "directory": result["directory"]})
             except Cancelled:
                 self.send({**base, "type": "cancelled", "status": "cancelled", "label": "중단됨 · 저장된 영상과 음성은 유지됩니다."})
             except Exception as error:

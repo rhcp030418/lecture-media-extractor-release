@@ -44,21 +44,21 @@ class UnifiedTests(unittest.TestCase):
         engine = Engine()
         def transcribe(audio, work, *_args):
             self.assertTrue(audio.is_file())
-            self.assertEqual(len(list((course / "video").iterdir())), 1)
+            self.assertTrue((work / "source.wav").is_file())
             (work / "chunk.wav").write_bytes(b"temporary audio")
             (work / "media-old.mp4.part").write_bytes(b"partial download")
             (work / "checkpoint.json").write_text('{}')
             return [Segment(0, 0.8, "파이프라인 시험입니다.")]
         with patch.object(engine, "transcribe", side_effect=transcribe):
             result = process_source(source, self.options, engine, threading.Event(), lambda _, s: stages.append(s), self.store)
-        self.assertEqual({p.name for p in course.iterdir()}, {"script"})
+        self.assertEqual({p.name for p in course.iterdir()}, {"script", ".jobs"})
         meta = result["payload"]["metadata"]
         self.assertEqual(meta["media_path"], "")
         self.assertEqual(meta["audio_path"], "")
         self.assertEqual(Path(result["directory"]).parent, course / "script")
         self.assertEqual(self.original.read_bytes(), before)
         self.assertEqual(self.store.recent()[0]["status"], "complete")
-        self.assertTrue(any("2/3" in s for s in stages))
+        self.assertTrue(any("?? ??" in s for s in stages))
         self.assertEqual({p.name for p in Path(result["directory"]).iterdir()}, {
             "transcript.txt", "transcript.md", "subtitles.srt", "subtitles.vtt",
             "transcript.json", "transcript.original.json"})
@@ -75,16 +75,16 @@ class UnifiedTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     process_source(source, self.options, engine, threading.Event(), lambda *_: None, self.store)
             self.assertEqual(self.store.recent()[0]["status"], "failed")
-            self.assertEqual(len(list(self.options.output.glob("Course/video/*"))), 1)
-            self.assertEqual(len(list(self.options.output.glob("Course/audio/*"))), 1)
-            record = next(self.options.output.glob("Course/script/*/pipeline.json"))
+            self.assertEqual(len(list(self.options.output.glob("Course/.work/*/source.wav"))), 1)
+            self.assertEqual(len(list(self.options.output.glob("Course/.work/*/audio.wav"))), 1)
+            record = next(self.options.output.glob("Course/.work/*/pipeline.json"))
             self.assertNotIn("secret", record.read_text())
             with patch("lecture_script.pipeline.extract_audio", side_effect=AssertionError("Must reuse audio")):
                 result = process_source(source, self.options, engine, threading.Event(), lambda *_: None, self.store)
             self.assertEqual(downloader.call_count, 1)
             self.assertFalse(record.exists())
-            self.assertFalse(list(self.options.output.glob("Course/video/*")))
-            self.assertFalse(list(self.options.output.glob("Course/audio/*")))
+            self.assertFalse(list(self.options.output.glob("Course/.work/*/source.wav")))
+            self.assertFalse(list(self.options.output.glob("Course/.work/*/audio.wav")))
             self.assertTrue((Path(result["directory"]) / "transcript.txt").is_file())
 
     def test_subtitle_preference_still_performs_first_two_stages(self):
@@ -105,8 +105,8 @@ class UnifiedTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 process_source(source, self.options, Engine(), threading.Event(), lambda *_: None, self.store)
         self.assertEqual(self.store.recent()[0]["status"], "failed")
-        self.assertEqual(len(list(self.options.output.glob("Course/video/*"))), 1)
-        self.assertEqual(len(list(self.options.output.glob("Course/audio/*"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/source.wav"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/audio.wav"))), 1)
         self.assertTrue(self.original.is_file())
 
     def test_cancellation_after_transcription_preserves_intermediates(self):
@@ -119,8 +119,8 @@ class UnifiedTests(unittest.TestCase):
             with self.assertRaises(Cancelled):
                 process_source(source, self.options, Engine(), cancel, lambda *_: None, self.store)
         self.assertEqual(self.store.recent()[0]["status"], "cancelled")
-        self.assertEqual(len(list(self.options.output.glob("Course/video/*"))), 1)
-        self.assertEqual(len(list(self.options.output.glob("Course/audio/*"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/source.wav"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/audio.wav"))), 1)
 
     def test_cleanup_preserves_other_lectures_files(self):
         for name in ("video", "audio"):
@@ -135,23 +135,23 @@ class UnifiedTests(unittest.TestCase):
             self.assertEqual((folder / "other.wav").read_bytes(), b"another lecture")
 
     def test_cleanup_rejects_original_or_external_path_before_deleting_anything(self):
-        directory = self.options.output / "Course" / "script" / "lecture"
-        work = directory / ".work"
-        work.mkdir(parents=True)
-        intermediate = work / "audio.wav"
-        intermediate.write_bytes(b"keep on invalid cleanup")
-        for path in (self.original, self.options.output / "local-original.wav"):
-            path.write_bytes(b"original")
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                remove_intermediates(Source(str(path), "local"), self.options.output,
-                                     intermediate, path, directory, work)
-            self.assertEqual(path.read_bytes(), b"original")
-            self.assertTrue(intermediate.is_file())
+        for external in (True, False):
+            with self.subTest(external=external):
+                work = (self.root if external else self.options.output) / "working"
+                work.mkdir(parents=True)
+                original = work / "original.wav"
+                original.write_bytes(b"original")
+                intermediate = work / "audio.wav"
+                intermediate.write_bytes(b"keep on invalid cleanup")
+                with self.assertRaises(ValueError):
+                    remove_intermediates(Source(str(original), "local"), self.options.output, work)
+                self.assertEqual(original.read_bytes(), b"original")
+                self.assertTrue(intermediate.is_file())
 
     def test_cleanup_error_is_reported_and_transcripts_are_preserved(self):
         original_unlink = Path.unlink
         def unlink(path, *args, **kwargs):
-            if path.parent.name == "video":
+            if path.parent.parent.name == ".work":
                 raise PermissionError("media file is open")
             return original_unlink(path, *args, **kwargs)
         with patch.object(Path, "unlink", unlink):
@@ -161,8 +161,8 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(self.store.recent()[0]["status"], "failed")
         directory = Path(self.store.recent()[0]["output_dir"])
         self.assertTrue((directory / "transcript.txt").is_file())
-        self.assertEqual(len(list(self.options.output.glob("Course/video/*"))), 1)
-        self.assertEqual(len(list(self.options.output.glob("Course/audio/*"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/source.wav"))), 1)
+        self.assertEqual(len(list(self.options.output.glob("Course/.work/*/audio.wav"))), 1)
 
     def test_completed_job_reopens_without_media_and_missing_exports_are_rebuilt(self):
         raw = {"url": "https://cdn.test/lecture.mp4", "page_url": "https://school.test/viewer",
@@ -188,7 +188,7 @@ class UnifiedTests(unittest.TestCase):
                 with patch("lecture_script.native_host.process_source", return_value=result) as process:
                     host = Host(send, self.options.output, self.store)
                     try:
-                        host.handle({"command": "start", "request_id": "reload", "source": raw, "retry": retry})
+                        host.handle({"command": "start", "request_id": "reload", "source": raw, "retry": retry, "outputs": ["script"]})
                         self.assertTrue(finished.wait(3), messages)
                         self.assertEqual(messages[-1]["type"], "complete", messages)
                         self.assertEqual(process.call_count, int(should_process))

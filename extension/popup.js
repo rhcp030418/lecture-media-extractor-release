@@ -1,5 +1,17 @@
 const $ = id => document.getElementById(id);
 let tabId;
+let starting = false;
+let settingsSaved = Promise.resolve();
+const outputKinds = ["mp4", "mp3", "script"];
+function selectedOutputs() { return outputKinds.filter(kind => $(kind).checked); }
+function updateSelection() {
+  const outputs = selectedOutputs();
+  $("start").disabled = starting || !outputs.length;
+  $("model").disabled = !outputs.includes("script");
+  $("selection-hint").textContent = outputs.length
+    ? "선택한 파일은 저장 후 유지됩니다. 변경한 선택은 다음 작업부터 적용됩니다."
+    : "MP4, MP3, 스크립트 중 하나 이상 선택하세요.";
+}
 async function send(message) {
   const response = await chrome.runtime.sendMessage(message);
   if (response.error) throw new Error(response.error);
@@ -29,20 +41,32 @@ async function refresh() {
 }
 $("auto").onchange = () => chrome.storage.local.set({auto: $("auto").checked});
 $("model").onchange = () => chrome.storage.local.set({model: $("model").value});
+for (const kind of outputKinds) {
+  $(kind).onchange = () => {
+    updateSelection();
+    const outputs = selectedOutputs();
+    settingsSaved = settingsSaved.catch(() => {}).then(() => chrome.storage.local.set({outputs}));
+    settingsSaved.catch(notice);
+  };
+}
 $("open").onclick = () => send({type: "open_output"}).catch(notice);
 $("start").onclick = async () => {
-  $("start").disabled = true; $("notice").textContent = "";
+  starting = true; updateSelection(); $("notice").textContent = "";
   try {
+    await settingsSaved;
+    if (!selectedOutputs().length) throw new Error("다운로드할 파일을 하나 이상 선택하세요.");
     const result = await send({type: "start", tabId, course: $("course").value});
     if (result.waiting) $("notice").textContent = "영상을 재생하면 자동으로 시작합니다. 감지되지 않으면 페이지를 새로고침한 뒤 다시 누르세요.";
     await refresh();
   } catch (error) { notice(error); }
-  finally { $("start").disabled = false; }
+  finally { starting = false; updateSelection(); }
 };
 (async () => {
   tabId = (await chrome.tabs.query({active: true, currentWindow: true}))[0]?.id;
-  const settings = await chrome.storage.local.get({auto: true, model: "small"});
+  const settings = await chrome.storage.local.get({auto: true, model: "small", outputs: outputKinds});
   $("auto").checked = settings.auto; $("model").value = settings.model;
+  for (const kind of outputKinds) $(kind).checked = Array.isArray(settings.outputs) && settings.outputs.includes(kind);
+  updateSelection();
   await refresh();
   setInterval(() => refresh().catch(notice), 1000);
 })().catch(notice);

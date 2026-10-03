@@ -1,4 +1,4 @@
-const HOST = "kr.lecture_script.pipeline";
+const HOST = "kr.lecture_script.outputs";
 const tabs = new Map();
 const requests = new Map();
 const jobs = new Map();
@@ -146,9 +146,11 @@ async function metadata(state) {
 async function start(state, retry = Boolean(state.retry)) {
   await restored;
   if (state.started || tabs.get(state.tabId) !== state) return;
-  const settings = await chrome.storage.local.get({auto: true, model: "small"});
+  const settings = await chrome.storage.local.get({auto: true, model: "small", outputs: ["mp4", "mp3", "script"]});
   if (!state.manual && !settings.auto) return;
   if (!state.media.size) return;
+  const outputs = ["mp4", "mp3", "script"].filter(kind => Array.isArray(settings.outputs) && settings.outputs.includes(kind));
+  if (!outputs.length) throw new Error("MP4, MP3, 스크립트 중 하나 이상 선택하세요.");
   state.started = true; // Reserve before any async work: one source per lecture window.
   try {
     await metadata(state);
@@ -163,12 +165,12 @@ async function start(state, retry = Boolean(state.retry)) {
     const cookieGroups = await Promise.all([media.url, state.pageUrl].map(url => chrome.cookies.getAll({url, ...(storeId ? {storeId} : {})})));
     const cookies = [...new Map(cookieGroups.flat().map(c => [`${c.domain}|${c.path}|${c.name}`, c])).values()];
     const request_id = crypto.randomUUID();
-    const job = {request_id, tabId: state.tabId, title: state.title, course: state.course || "과목 미지정", status: "starting", progress: 0, label: "로컬 처리기 시작 중"};
+    const job = {request_id, tabId: state.tabId, title: state.title, course: state.course || "과목 미지정", outputs, status: "starting", progress: 0, label: "로컬 처리기 시작 중"};
     jobs.set(request_id, job);
     state.requestId = request_id;
     remember();
     const headers = {"Referer": state.pageUrl, ...media.headers};
-    connect().postMessage({command: "start", request_id, retry, model: settings.model,
+    connect().postMessage({command: "start", request_id, retry, model: settings.model, outputs,
       source: {...media, title: job.title, course: job.course, page_url: state.pageUrl, headers, cookies, drm: state.drm}});
   } catch (error) {
     state.started = false;

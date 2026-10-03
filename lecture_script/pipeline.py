@@ -183,6 +183,39 @@ def extract_audio(media: Path, target: Path, cancel) -> float:
     return duration
 
 
+def export_media(media: Path, target: Path, kind: str, cancel):
+    """Write a real MP4/MP3 to a temporary file, then publish atomically."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.stem + ".partial" + target.suffix)
+    codecs = (["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart"]
+              if kind == "mp4" else ["-map", "0:a:0", "-vn", "-c:a", "libmp3lame", "-q:a", "2"])
+    for attempt in range(2 if kind == "mp4" else 1):
+        check_cancel(cancel)
+        command = [ffmpeg_path(), "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(media),
+                   *codecs, str(temporary)]
+        with subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as process:
+            while True:
+                try:
+                    _, stderr = process.communicate(timeout=0.3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel.is_set():
+                        process.kill()
+                        process.communicate()
+                        raise Cancelled()
+        if process.returncode == 0:
+            check_cancel(cancel)
+            if not temporary.is_file() or not temporary.stat().st_size:
+                raise ValueError(f"{kind.upper()} 파일이 생성되지 않았습니다.")
+            temporary.replace(target)
+            return
+        # If stream copying cannot create MP4, encode compatible video/audio.
+        codecs = ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
+                  "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+    raise ValueError(f"{kind.upper()} 변환 실패: " + stderr.decode("utf-8", "replace")[-300:])
+
+
 @dataclass
 class Options:
     output: Path
@@ -192,6 +225,52 @@ class Options:
     prefer_subtitles: bool = True
     vocabulary: str = ""
     action: str = "transcribe"
+    outputs: tuple[str, ...] = ("script",)
+
+
+def validate_outputs(outputs):
+    if (not isinstance(outputs, (list, tuple)) or not outputs
+            or any(not isinstance(item, str) or item not in ("mp4", "mp3", "script") for item in outputs)):
+        raise ValueError("MP4, MP3, 스크립트 중 하나 이상 선택하세요.")
+    return tuple(kind for kind in ("mp4", "mp3", "script") if kind in outputs)
+
+
+def saved_outputs(course: Path, identity: str) -> dict:
+    """Return only complete, nonempty exports belonging to this course."""
+    files = {}
+    try:
+        record = json.loads((course / ".jobs" / f"{identity}.json").read_text(encoding="utf-8"))
+        if record["identity"] != identity:
+            return files
+        for kind, folder in (("mp4", "video"), ("mp3", "audio"), ("script", "script")):
+            if kind not in record["files"]:
+                continue
+            path = Path(record["files"][kind])
+            if path.resolve().parent != (course / folder).resolve():
+                continue
+            if kind == "script":
+                if not all((path / name).is_file() and (path / name).stat().st_size for name in (
+                        "transcript.txt", "transcript.md", "subtitles.srt", "subtitles.vtt",
+                        "transcript.json", "transcript.original.json")):
+                    continue
+                payload = json.loads((path / "transcript.json").read_text(encoding="utf-8"))
+                if not payload.get("segments"):
+                    continue
+            elif path.suffix != f".{kind}" or not path.is_file() or not path.stat().st_size:
+                continue
+            files[kind] = str(path.resolve())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return files
+
+
+def completed_outputs(source, options):
+    course = options.output / safe_name(source.course or "과목 미지정")
+    files = saved_outputs(course, job_identity(source))
+    if not all(kind in files for kind in options.outputs):
+        return None
+    return {"directory": files["script"] if "script" in options.outputs else str(course),
+            "course_directory": str(course), "outputs": {kind: files[kind] for kind in options.outputs}}
 
 
 def save_audio(source: Source, options: Options, cancel, progress, store=None):
@@ -352,15 +431,16 @@ class Transcriber:
 
 
 def process_source(source, options, transcriber, cancel, progress, store=None):
-    """Produce the transcript, then remove this job's intermediate media."""
+    """Save the selected exports and clean up only intermediate files."""
     from PySide6.QtCore import QLockFile
+    options.outputs = validate_outputs(options.outputs)
     if source.drm:
         raise ValueError("DRM으로 보호된 영상은 지원하지 않습니다.")
     identity = job_identity(source)
     course = options.output / safe_name(source.course or "과목 미지정")
     stem = f"{safe_name(source.title)}_{identity[:8]}"
     directory = course / "script" / stem
-    work = directory / ".work"
+    work = course / ".work" / identity
     work.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(options.output / ".pipeline.lock"))
     lock.setStaleLockTime(0)
@@ -377,13 +457,11 @@ def process_source(source, options, transcriber, cancel, progress, store=None):
         lock.unlock()
 
 
-def remove_intermediates(source, output, media, audio, directory, work):
-    """Delete only this job's files, after all transcript exports succeeded."""
+def remove_intermediates(source, output, work):
+    """Delete only this job's working files; final exports are never targets."""
     root = output.resolve()
     original = Path(source.url).resolve() if source.local else None
-    paths = [path for path in (media, audio) if path is not None]
-    paths.extend(path for path in work.iterdir() if path.is_file() or path.is_symlink())
-    paths.append(directory / "pipeline.json")
+    paths = [path for path in work.iterdir() if path.is_file() or path.is_symlink()]
     # Validate every target before deleting any file; never follow a path outside output.
     for path in [work, *paths]:
         resolved = path.resolve()
@@ -392,7 +470,7 @@ def remove_intermediates(source, output, media, audio, directory, work):
     for path in paths:
         path.unlink(missing_ok=True)
     # Only remove empty directories; other lectures' files must remain untouched.
-    for folder in [work, *(path.parent for path in (media, audio) if path is not None)]:
+    for folder in (work, work.parent):
         try:
             folder.rmdir()
         except OSError:
@@ -402,6 +480,7 @@ def remove_intermediates(source, output, media, audio, directory, work):
 def _process_pipeline(source, options, transcriber, cancel, progress, store,
                       identity, course, stem, directory, work):
     stage = "downloading"
+    result_directory = directory if "script" in options.outputs else course
     last_report = (0.0, None, None)
     def report(value, label):
         nonlocal last_report
@@ -410,108 +489,128 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
             return
         last_report = (now, value, stage)
         if store:
-            store.update(identity, source.title, stage, directory, progress=value, detail=label)
+            store.update(identity, source.title, stage, result_directory, progress=value, detail=label)
         progress(value, label)
 
     if store:
-        store.update(identity, source.title, "running", directory)
+        store.update(identity, source.title, "running", result_directory)
     try:
         check_cancel(cancel)
-        segments, media, audio, origin, duration = None, None, None, "speech_recognition", None
+        files = saved_outputs(course, identity)
+        payload, segments, media, audio, duration = None, None, None, None, None
+        origin = "speech_recognition"
         is_caption = source.kind == "subtitle" or (source.local and Path(source.url).suffix.lower() in (".srt", ".vtt"))
         if is_caption:
+            if options.outputs != ("script",):
+                raise ValueError("?? ????? ????? ??? ? ????.")
             stage = "transcribing"
             content = Path(source.url).read_text(encoding="utf-8-sig") if source.local else read_caption(source, source.url, cancel)
             segments, origin = parse_subtitles(content), "existing_subtitles"
         else:
-            for name in ("video", "audio"):
-                (course / name).mkdir(parents=True, exist_ok=True)
-            # A completed download remains usable if transcription fails or Chrome closes.
-            record_path = directory / "pipeline.json"
+            record_path = work / "pipeline.json"
             saved = {}
-            if record_path.exists():
-                try:
-                    saved = json.loads(record_path.read_text(encoding="utf-8"))
-                except (ValueError, OSError):
-                    pass
+            try:
+                saved = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
             recorded_media = Path(saved.get("media_path", ""))
             if (saved.get("identity") == identity and recorded_media.is_file()
-                    and recorded_media.stem == stem
-                    and recorded_media.parent.resolve() == (course / "video").resolve()
+                    and recorded_media.resolve().parent == work.resolve()
                     and recorded_media.stat().st_size == saved.get("media_size")):
                 media = recorded_media
-                report(14, "1/3 · 저장된 영상 사용")
+                report(14, "??? ??? ?? ??")
+            elif "mp4" in files:
+                media = Path(files["mp4"])
+                report(14, "??? MP4 ?? ??")
             else:
-                report(0, "1/3 · 동영상 다운로드 중")
-                original = Path(source.url) if source.local else download_media(source, work, cancel, report)
-                check_cancel(cancel)
-                media = course / "video" / (stem + original.suffix)
+                report(0, "??? ???? ?")
                 if source.local:
-                    # Copy only; never move or delete the user's original.
+                    original = Path(source.url)
+                    media = work / ("source" + original.suffix)
                     temporary = media.with_suffix(media.suffix + ".partial")
                     shutil.copy2(original, temporary)
                     temporary.replace(media)
                 else:
-                    original.replace(media)
-                saved = {"identity": identity, "media_path": str(media.resolve()), "media_size": media.stat().st_size}
-                atomic_json(record_path, saved)
-            stage = "extracting"
-            report(15, "2/3 · 음성 추출 중")
-            audio = course / "audio" / (stem + ".wav")
-            if saved.get("audio_size") == (audio.stat().st_size if audio.exists() else -1):
-                with wave.open(str(audio), "rb") as wave_file:
-                    duration = wave_file.getnframes() / wave_file.getframerate()
-            else:
-                duration = extract_audio(media, work / "audio.wav", cancel)
+                    media = download_media(source, work, cancel, report, "mp4" not in options.outputs)
                 check_cancel(cancel)
-                (work / "audio.wav").replace(audio)
-                saved.update(audio_path=str(audio.resolve()), audio_size=audio.stat().st_size, duration=duration)
-                atomic_json(record_path, saved)
-            stage = "transcribing"
-            report(25, "3/3 · 자막 스크립트 생성 중")
-            if options.prefer_subtitles:
-                try:
-                    if source.local:
-                        for extension in (".srt", ".vtt"):
-                            sidecar = Path(source.url).with_suffix(extension)
-                            if sidecar.exists():
-                                segments = parse_subtitles(sidecar.read_text(encoding="utf-8-sig")) or None
-                                break
-                    elif source.subtitle_url:
-                        segments = parse_subtitles(read_caption(source, source.subtitle_url, cancel)) or None
-                    if segments and max(s.end for s in segments) > duration + 5:
-                        segments = None
-                    if segments:
-                        origin = "existing_subtitles"
-                except Cancelled:
-                    raise
-                except Exception:
-                    report(25, "3/3 · 기존 자막을 읽지 못해 음성 인식으로 진행합니다")
-            if segments is None:
-                segments = transcriber.transcribe(audio, work, options, cancel, report)
+            saved.update(identity=identity, media_path=str(media.resolve()), media_size=media.stat().st_size)
+            atomic_json(record_path, saved)
+
+            if "mp4" in options.outputs:
+                stage = "exporting"
+                report(16, "MP4 ?? ?? ?")
+                target = course / "video" / (stem + ".mp4")
+                if media.resolve() != target.resolve():
+                    export_media(media, target, "mp4", cancel)
+                files["mp4"] = str(target.resolve())
+            if "mp3" in options.outputs:
+                stage = "exporting"
+                report(20, "MP3 ?? ?? ?")
+                target = course / "audio" / (stem + ".mp3")
+                export_media(media, target, "mp3", cancel)
+                files["mp3"] = str(target.resolve())
+            if "script" in options.outputs:
+                stage = "extracting"
+                report(23, "???? ??? ?? ?? ?? ?")
+                audio = work / "audio.wav"
+                if saved.get("audio_size") == (audio.stat().st_size if audio.exists() else -1):
+                    with wave.open(str(audio), "rb") as wave_file:
+                        duration = wave_file.getnframes() / wave_file.getframerate()
+                else:
+                    duration = extract_audio(media, audio, cancel)
+                    check_cancel(cancel)
+                    saved.update(audio_size=audio.stat().st_size, duration=duration)
+                    atomic_json(record_path, saved)
+                stage = "transcribing"
+                report(25, "?? ???? ?? ?")
+                if options.prefer_subtitles:
+                    try:
+                        if source.local:
+                            for extension in (".srt", ".vtt"):
+                                sidecar = Path(source.url).with_suffix(extension)
+                                if sidecar.exists():
+                                    segments = parse_subtitles(sidecar.read_text(encoding="utf-8-sig")) or None
+                                    break
+                        elif source.subtitle_url:
+                            segments = parse_subtitles(read_caption(source, source.subtitle_url, cancel)) or None
+                        if segments and max(s.end for s in segments) > duration + 5:
+                            segments = None
+                        if segments:
+                            origin = "existing_subtitles"
+                    except Cancelled:
+                        raise
+                    except Exception:
+                        report(25, "?? ??? ?? ?? ?? ???? ?????")
+                if segments is None:
+                    segments = transcriber.transcribe(audio, work, options, cancel, report)
         check_cancel(cancel)
-        if not segments:
-            raise ValueError("인식된 음성이 없습니다. 음량·언어를 확인하거나 기존 자막을 사용하세요.")
-        metadata = {"origin": origin, "course": source.course,
-                    "model": options.model if origin == "speech_recognition" else None,
-                    "device": (transcriber.actual_device or "checkpoint") if origin == "speech_recognition" else None,
-                    "compute_type": transcriber.compute_type if origin == "speech_recognition" else None,
-                    "language": options.language, "media_path": "", "audio_path": "",
-                    "duration": duration,
-                    "source_host": source.display_location if not source.local else "local"}
-        report(95, "3/3 · 대본과 자막 저장 중")
-        payload = export_transcript(directory, source.title, segments, metadata)
+        if "script" in options.outputs:
+            if not segments:
+                raise ValueError("??? ??? ????. ?????? ????? ?? ??? ?????.")
+            metadata = {"origin": origin, "course": source.course,
+                        "model": options.model if origin == "speech_recognition" else None,
+                        "device": (transcriber.actual_device or "checkpoint") if origin == "speech_recognition" else None,
+                        "compute_type": transcriber.compute_type if origin == "speech_recognition" else None,
+                        "language": options.language, "media_path": files.get("mp4", ""),
+                        "audio_path": files.get("mp3", ""), "duration": duration,
+                        "source_host": source.display_location if not source.local else "local"}
+            report(95, "??? ?? ?? ?")
+            payload = export_transcript(directory, source.title, segments, metadata)
+            files["script"] = str(directory.resolve())
         check_cancel(cancel)
         stage = "cleaning"
-        report(98, "대본 저장 완료 · 처리용 영상·음성 정리 중")
-        remove_intermediates(source, options.output, media, audio, directory, work)
+        report(98, "??? ?? ?? ?? ? ?? ?? ?? ?")
+        remove_intermediates(source, options.output, work)
+        atomic_json(course / ".jobs" / f"{identity}.json", {"identity": identity, "files": files})
+        label = "??? ?? ?? ?? ? " + " ? ".join("????" if kind == "script" else kind.upper() for kind in options.outputs)
         if store:
-            store.update(identity, source.title, "complete", directory, progress=100, detail="스크립트·자막 저장 완료 · 처리용 파일 정리 완료")
-        progress(100, "스크립트·자막 저장 완료 · 처리용 파일 정리 완료")
-        return {"directory": str(directory), "course_directory": str(course), "payload": payload}
+            store.update(identity, source.title, "complete", result_directory, progress=100, detail=label)
+        progress(100, label)
+        return {"directory": str(result_directory), "course_directory": str(course), "payload": payload,
+                "outputs": {kind: files[kind] for kind in options.outputs}}
     except Exception as error:
         if store:
-            store.update(identity, source.title, "cancelled" if isinstance(error, Cancelled) else "failed", directory,
+            store.update(identity, source.title, "cancelled" if isinstance(error, Cancelled) else "failed", result_directory,
                          "" if isinstance(error, Cancelled) else safe_error(error))
         raise
 

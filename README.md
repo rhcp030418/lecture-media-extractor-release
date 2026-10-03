@@ -1,10 +1,10 @@
 # Lecture Media Extractor
 
-Lecture Media Extractor downloads lecture videos, extracts audio, and creates transcripts, then deletes the intermediate video and audio after successful export. The automatic Windows/Chrome workflow is based on Lecture Script 0.3. The existing URL sniffer and Python CLI are also available.
+Lecture Media Extractor saves your choice of MP4 video, MP3 audio, and transcripts. Select one or more formats in the Chrome extension; selected files are kept and only temporary processing files are removed. The automatic Windows/Chrome workflow is based on Lecture Script 0.3. The existing URL sniffer and Python CLI are also available.
 
-## 자동 처리: 강의 창을 열면 영상 → 음성 → 자막 저장
+## 자동 처리: MP4 · MP3 · 스크립트 선택 다운로드
 
-Windows와 Chrome에서 한성 eClass 강의 창을 열면 **동영상 다운로드 → 음성 추출 → 자막 스크립트 생성 → 처리용 영상·음성 삭제**를 자동으로 진행합니다.
+Windows와 Chrome에서 한성 eClass 강의 창을 열면 확장에서 체크한 **MP4 영상·MP3 음성·스크립트**를 자동으로 저장합니다. 기본값은 세 항목 모두 선택이며, 필요한 항목만 체크할 수 있습니다.
 
 ### 처음 설치
 
@@ -16,20 +16,24 @@ Windows와 Chrome에서 한성 eClass 강의 창을 열면 **동영상 다운로
 
 설치 화면 안내: [install-guide.html](install-guide.html). 관리자 권한은 필요하지 않습니다. 프로젝트 폴더를 옮기면 `install-chrome.cmd`를 실행하고 확장도 새 경로에서 다시 로드합니다.
 
+**이전 버전에서 업데이트할 때도 이 폴더의 `install-chrome.cmd`를 한 번 실행하세요.** 0.4의 선택 다운로드는 새 로컬 처리기 연결을 사용하므로 확장 새로고침만으로는 적용되지 않습니다. 이 폴더에 처음 설치한다면 `setup.cmd`를 실행합니다.
+
 자동 처리 확장은 `extension`입니다. 아래의 `m3u8-sniffer-extension`은 주소 복사와 과목 목록 수집을 위한 별도 확장입니다. 자동 처리에는 설치하지 않아도 됩니다.
 
 ### 사용 및 저장 위치
 
-- 확장 아이콘에서 진행 상황, 자동 실행 설정, **현재 영상 시작 / 재시도**, **중단**, **저장 폴더 열기**를 사용할 수 있습니다.
-- 대본과 자막은 Windows에 등록된 **다운로드 폴더/lecture/과목명/script/** 아래에 저장됩니다.
-- 영상과 WAV 음성은 처리 중에만 보관하고, 대본·자막 저장이 모두 성공하면 자동으로 삭제합니다. 임시 파일도 정리하며, 사용자가 직접 선택한 로컬 원본 파일은 보존합니다.
+- 확장 아이콘의 **다운로드할 파일**에서 MP4 영상, MP3 음성, 스크립트를 선택하고 **선택한 파일 다운로드 / 재시도**를 누릅니다. 자동 시작에도 같은 선택을 사용합니다.
+- 선택은 확장 팝업을 닫아도 유지되고 다음 작업부터 적용됩니다. 하나도 선택하지 않으면 작업을 시작하지 않습니다.
+- 결과는 Windows에 등록된 **다운로드 폴더/lecture/과목명/** 아래의 `video/*.mp4`, `audio/*.mp3`, `script/강의명/`에 저장됩니다.
+- **선택한 결과물은 삭제하지 않습니다.** 선택한 출력이 모두 완료되면 임시 영상·WAV·작업 파일만 정리합니다. 이후 선택을 바꿔도 앞서 저장한 결과와 로컬 원본은 보존합니다.
+- MP4와 MP3는 실제 해당 형식으로 저장합니다. 스크립트를 해제하면 음성 인식을 실행하지 않고 모델도 내려받지 않습니다. MP4만 선택하면 음성 추출도 생략합니다.
 - 대본 폴더에는 `transcript.txt`, `transcript.md`, `subtitles.srt`, `subtitles.vtt`, JSON 메타데이터가 생성됩니다.
 - 과목명은 강의 창 또는 그 창을 연 과목 페이지에서 읽습니다. 찾지 못하면 `과목 미지정`에 저장하며, 확장 팝업에서 과목명을 입력하고 재시도할 수 있습니다.
-- 완료된 강의를 다시 열면 영상·음성이 삭제돼 있어도 기존 대본·자막을 사용합니다. **현재 영상 시작 / 재시도**를 누르면 다시 다운로드해 처리합니다. 실패·중단된 작업의 영상·음성과 완료한 전사 구간은 재시도에 사용합니다.
+- 완료된 강의를 다시 열면 현재 선택한 파일이 모두 있을 때 기존 결과를 사용합니다. 선택을 추가하거나 파일이 누락되면 다시 처리합니다. 저장된 MP4가 있으면 재사용하며, 실패·중단된 작업의 임시 파일과 완료한 전사 구간도 재시도에 사용합니다.
 - **처리 중에는 Chrome을 켜두세요.** 강의 탭이나 확장 팝업은 닫아도 됩니다. Chrome을 완전히 종료하면 처리가 중단됩니다.
-- `start.cmd`로 저장 기록을 확인하거나 내 동영상 파일을 선택해 처리할 수 있습니다. 자동 처리에는 관리 화면을 켜둘 필요가 없습니다.
+- `start.cmd`로 저장 기록을 확인하거나 내 파일을 스크립트로 변환할 수 있습니다. MP4·MP3 선택 다운로드는 크롬 확장에서 설정합니다. 자동 처리에는 관리 화면을 켜둘 필요가 없습니다.
 
-자동 시작은 `https://learn.hansung.ac.kr/mod/vod/viewer.php?id=...`에 적용됩니다. 다른 사이트에서는 확장의 **현재 영상 시작 / 재시도**를 사용할 수 있습니다. MP4, HLS, DASH 감지는 플레이어 방식에 따라 달라집니다. 자동 처리 확장은 다른 강의를 직접 열거나 과목 목록을 순회하지 않습니다.
+자동 시작은 `https://learn.hansung.ac.kr/mod/vod/viewer.php?id=...`에 적용됩니다. 다른 사이트에서는 확장의 **선택한 파일 다운로드 / 재시도**를 사용할 수 있습니다. MP4, HLS, DASH 감지는 플레이어 방식에 따라 달라집니다. 자동 처리 확장은 다른 강의를 직접 열거나 과목 목록을 순회하지 않습니다.
 
 음성 인식은 로컬에서 실행하고, 모델은 처음 사용할 때 내려받습니다. 기본 설치는 CPU에서 사용할 수 있습니다. NVIDIA GPU용 선택 패키지는 다음 명령으로 설치합니다. GPU 초기화에 실패하면 자동 모드에서 CPU로 전환합니다.
 

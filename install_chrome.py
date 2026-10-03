@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from lecture_script import NATIVE_HOST_NAME
 
 ROOT = Path(__file__).resolve().parent
 
@@ -25,12 +26,12 @@ def install():
     launcher.write_text(
         '@echo off\nchcp 65001 >nul\nsetlocal\n'
         f'cd /d "{ROOT}"\n"{python}" -u -m lecture_script.native_host %*\n', encoding="utf-8")
-    manifest = directory / "kr.lecture_script.pipeline.json"
+    manifest = directory / f"{NATIVE_HOST_NAME}.json"
     manifest.write_text(json.dumps({
-        "name": "kr.lecture_script.pipeline", "description": "Lecture Script video/audio/transcript pipeline",
+        "name": NATIVE_HOST_NAME, "description": "Lecture Script selected MP4/MP3/transcript exports",
         "path": str(launcher), "type": "stdio", "allowed_origins": [f"chrome-extension://{extension_id}/"]
     }, indent=2), encoding="utf-8")
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\NativeMessagingHosts\kr.lecture_script.pipeline") as key:
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Google\Chrome\NativeMessagingHosts\{NATIVE_HOST_NAME}") as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(manifest))
     print(f"Native host installed. Extension ID: {extension_id}")
     print(f"Chrome > chrome://extensions > Developer mode > Load unpacked > {ROOT / 'extension'}")

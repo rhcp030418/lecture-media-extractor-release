@@ -67,7 +67,7 @@ class Window(QMainWindow):
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
         layout = QVBoxLayout(root); layout.setContentsMargins(28, 24, 28, 24); layout.setSpacing(14)
         title = QLabel("강의 창에서, 스크립트까지."); title.setObjectName("heading"); layout.addWidget(title)
-        subtitle = QLabel("동영상 다운로드  →  음성 추출  →  자막 스크립트 생성  →  처리용 파일 삭제"); subtitle.setObjectName("muted"); layout.addWidget(subtitle)
+        subtitle = QLabel("크롬 확장에서 MP4 영상 · MP3 음성 · 스크립트 선택 저장"); subtitle.setObjectName("muted"); layout.addWidget(subtitle)
         banner = QLabel("크롬에서 한성 eClass 강의 동영상 창을 열면 자동으로 시작합니다.\n확장 설치 후에는 이 앱을 켜두지 않아도 됩니다. 진행 상황은 크롬 확장 아이콘에서 확인하세요.")
         banner.setObjectName("banner"); banner.setWordWrap(True); layout.addWidget(banner)
         actions = QHBoxLayout()
@@ -75,7 +75,7 @@ class Window(QMainWindow):
         actions.addWidget(button("확장 폴더 열기", lambda: self.open_path(ROOT / "extension")))
         actions.addWidget(button("저장 폴더 열기", self.open_output))
         actions.addStretch(); layout.addLayout(actions)
-        folder = QLabel(str(self.output) + " / 과목명 / script · 완료 후 영상·음성 자동 삭제")
+        folder = QLabel(str(self.output) + " / 과목명 / video · audio · script")
         folder.setObjectName("muted"); folder.setWordWrap(True); folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(folder)
         local = QHBoxLayout()
@@ -83,7 +83,7 @@ class Window(QMainWindow):
         self.model = QComboBox()
         for label, value in (("빠르게 · small", "small"), ("균형 · medium", "medium"), ("정밀 · large-v3", "large-v3"), ("turbo", "turbo")):
             self.model.addItem(label, value)
-        self.run_button = button("내 동영상 선택 → 전체 처리", self.add_files)
+        self.run_button = button("내 파일 선택 → 스크립트 생성", self.add_files)
         self.cancel_button = button("중단", self.cancel_jobs); self.cancel_button.setEnabled(False)
         for widget in (self.course, self.model, self.run_button, self.cancel_button): local.addWidget(widget)
         layout.addLayout(local)
@@ -101,7 +101,7 @@ class Window(QMainWindow):
         self.table.cellDoubleClicked.connect(lambda *_: self.open_selected())
         layout.addWidget(self.table, 3)
         self.preview = QPlainTextEdit(); self.preview.setReadOnly(True)
-        self.preview.setPlaceholderText("저장 기록을 선택하면 대본이 표시됩니다. 기록을 두 번 누르면 해당 폴더가 열립니다.")
+        self.preview.setPlaceholderText("스크립트 기록을 선택하면 대본이 표시됩니다. 기록을 두 번 누르면 저장 폴더가 열립니다.")
         layout.addWidget(self.preview, 2)
         self.setStyleSheet(STYLE)
         self.timer = QTimer(self); self.timer.timeout.connect(self.refresh_history); self.timer.start(1000)
@@ -155,8 +155,8 @@ class Window(QMainWindow):
         selected_id = self.records[selected]["id"] if 0 <= selected < len(self.records) else None
         self.snapshot = records; self.records = records
         self.table.blockSignals(True); self.table.setRowCount(len(records))
-        labels = {"complete": "완료", "running": "처리 중", "downloading": "1/3 영상 다운로드", "extracting": "2/3 음성 추출",
-                  "transcribing": "3/3 스크립트 생성", "cleaning": "처리용 파일 정리", "cancelled": "중단", "failed": "실패", "interrupted": "중단됨", "audio_ready": "이전 음원"}
+        labels = {"complete": "완료", "running": "처리 중", "downloading": "미디어 다운로드", "extracting": "음성 추출",
+                  "transcribing": "스크립트 생성", "exporting": "선택한 파일 저장", "cleaning": "임시 파일 정리", "cancelled": "중단", "failed": "실패", "interrupted": "중단됨", "audio_ready": "이전 음원"}
         for row, record in enumerate(records):
             for column, value in enumerate((record["title"], labels.get(record["status"], record["status"]),
                                             record.get("error") or record.get("detail") or "")):
