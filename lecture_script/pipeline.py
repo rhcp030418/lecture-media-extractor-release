@@ -530,7 +530,7 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
         is_caption = source.kind == "subtitle" or (source.local and Path(source.url).suffix.lower() in (".srt", ".vtt"))
         if is_caption:
             if options.outputs != ("script",):
-                raise ValueError("?? ????? ????? ??? ? ????.")
+                raise ValueError("자막 파일에서는 스크립트만 저장할 수 있습니다.")
             stage = "transcribing"
             content = Path(source.url).read_text(encoding="utf-8-sig") if source.local else read_caption(source, source.url, cancel)
             segments, origin = parse_subtitles(content), "existing_subtitles"
@@ -546,12 +546,12 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                     and recorded_media.resolve().parent == work.resolve()
                     and recorded_media.stat().st_size == saved.get("media_size")):
                 media = recorded_media
-                report(14, "??? ??? ?? ??")
+                report(14, "이전에 내려받은 파일 사용 중")
             elif "mp4" in files:
                 media = Path(files["mp4"])
-                report(14, "??? MP4 ?? ??")
+                report(14, "저장된 MP4 다시 사용 중")
             else:
-                report(0, "??? ???? ?")
+                report(0, "미디어 다운로드 준비 중")
                 if source.local:
                     original = Path(source.url)
                     media = work / ("source" + original.suffix)
@@ -566,20 +566,20 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
 
             if "mp4" in options.outputs:
                 stage = "exporting"
-                report(16, "MP4 ?? ?? ?")
+                report(16, "MP4 영상 저장 중")
                 target = course / "video" / (stem + ".mp4")
                 if media.resolve() != target.resolve():
                     export_media(media, target, "mp4", cancel)
                 files["mp4"] = str(target.resolve())
             if "mp3" in options.outputs:
                 stage = "exporting"
-                report(20, "MP3 ?? ?? ?")
+                report(20, "MP3 음성 저장 중")
                 target = course / "audio" / (stem + ".mp3")
                 export_media(media, target, "mp3", cancel)
                 files["mp3"] = str(target.resolve())
             if "script" in options.outputs:
                 stage = "extracting"
-                report(23, "???? ??? ?? ?? ?? ?")
+                report(23, "스크립트 생성을 위한 음원 추출 중")
                 audio = work / "audio.wav"
                 if saved.get("audio_size") == (audio.stat().st_size if audio.exists() else -1):
                     with wave.open(str(audio), "rb") as wave_file:
@@ -590,7 +590,7 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                     saved.update(audio_size=audio.stat().st_size, duration=duration)
                     atomic_json(record_path, saved)
                 stage = "transcribing"
-                report(25, "?? ???? ?? ?")
+                report(25, "음성 스크립트 준비 중")
                 if options.prefer_subtitles:
                     try:
                         if source.local:
@@ -608,13 +608,13 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                     except Cancelled:
                         raise
                     except Exception:
-                        report(25, "?? ??? ?? ?? ?? ???? ?????")
+                        report(25, "기존 자막을 읽지 못해 음성 인식으로 전환합니다")
                 if segments is None:
                     segments = transcriber.transcribe(audio, work, options, cancel, report)
         check_cancel(cancel)
         if "script" in options.outputs:
             if not segments:
-                raise ValueError("??? ??? ????. ?????? ????? ?? ??? ?????.")
+                raise ValueError("인식한 음성이 없습니다. 재생 가능한 음성이 있는 파일인지 확인하세요.")
             metadata = {"origin": origin, "course": source.course,
                         "model": options.model if origin == "speech_recognition" else None,
                         "device": (transcriber.actual_device or "checkpoint") if origin == "speech_recognition" else None,
@@ -622,15 +622,15 @@ def _process_pipeline(source, options, transcriber, cancel, progress, store,
                         "language": options.language, "media_path": files.get("mp4", ""),
                         "audio_path": files.get("mp3", ""), "duration": duration,
                         "source_host": source.display_location if not source.local else "local"}
-            report(95, "??? ?? ?? ?")
+            report(95, "스크립트 파일 저장 중")
             payload = export_transcript(directory, source.title, segments, metadata)
             files["script"] = str(directory.resolve())
         check_cancel(cancel)
         stage = "cleaning"
-        report(98, "??? ?? ?? ?? ? ?? ?? ?? ?")
+        report(98, "선택한 파일 저장 완료 · 임시 파일 정리 중")
         remove_intermediates(source, options.output, work)
         atomic_json(course / ".jobs" / f"{identity}.json", {"identity": identity, "files": files})
-        label = "??? ?? ?? ?? ? " + " ? ".join("????" if kind == "script" else kind.upper() for kind in options.outputs)
+        label = "선택한 파일 저장 완료 · " + " · ".join("스크립트" if kind == "script" else kind.upper() for kind in options.outputs)
         if store:
             store.update(identity, source.title, "complete", result_directory, progress=100, detail=label)
         progress(100, label)
