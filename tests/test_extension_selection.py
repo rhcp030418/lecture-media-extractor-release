@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 
 class ExtensionSelectionTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class ExtensionSelectionTests(unittest.TestCase):
                 def open_popup():
                     popup = context.new_page()
                     popup.goto(popup_url)
-                    popup.wait_for_function("document.querySelector('#output').textContent === 'Downloads/lecture'")
+                    expect(popup.locator("#output")).to_have_text("Downloads/lecture")
                     # An action popup uses the player tab; this fixture opens its HTML as a tab.
                     popup.evaluate("id => { tabId = id; }", player_id)
                     return popup
