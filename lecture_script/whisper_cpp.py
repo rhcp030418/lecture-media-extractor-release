@@ -142,7 +142,11 @@ def available_devices():
             result = subprocess.run([str(executable()), "-m", str(model), "-f", str(audio)],
                                     capture_output=True, timeout=20, creationflags=CREATE_NO_WINDOW)
             return parse_devices(result.stderr.decode("utf-8", "replace"))
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired as error:
+        # Some Metal drivers enumerate the GPU before a slow initialization step.
+        # Keep that discovery; _load still verifies an actual inference before use.
+        return parse_devices((error.stderr or b"").decode("utf-8", "replace"))
+    except OSError:
         return []
 
 

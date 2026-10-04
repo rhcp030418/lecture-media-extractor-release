@@ -90,6 +90,16 @@ ggml_vulkan: 3 = llvmpipe software | uma: 1 | fp16: 0''')
             self.assertEqual(vulkan.available_devices(), [])
             run.assert_not_called()
 
+    def test_slow_probe_preserves_devices_already_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cli = Path(directory) / "whisper-cli"
+            cli.touch()
+            for log, expected in ((b"ggml_metal_device_init: GPU name: MTL0\n", ["metal"]), (None, [])):
+                with self.subTest(log=log), patch.object(vulkan, "executable", return_value=cli), \
+                        patch.object(vulkan.subprocess, "run", side_effect=vulkan.subprocess.TimeoutExpired(
+                            "whisper-cli", 20, stderr=log)):
+                    self.assertEqual([device["backend"] for device in vulkan.available_devices()], expected)
+
     def test_cancelled_job_does_not_start_process(self):
         cancel = threading.Event()
         cancel.set()
