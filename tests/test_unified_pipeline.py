@@ -58,7 +58,7 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(Path(result["directory"]).parent, course / "script")
         self.assertEqual(self.original.read_bytes(), before)
         self.assertEqual(self.store.recent()[0]["status"], "complete")
-        self.assertTrue(any("?? ??" in s for s in stages))
+        self.assertTrue(any("임시 파일 정리" in s for s in stages))
         self.assertEqual({p.name for p in Path(result["directory"]).iterdir()}, {
             "transcript.txt", "transcript.md", "subtitles.srt", "subtitles.vtt",
             "transcript.json", "transcript.original.json"})
