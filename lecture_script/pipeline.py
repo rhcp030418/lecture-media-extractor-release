@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -20,7 +21,7 @@ from PySide6.QtCore import QThread, Signal
 from .browser import Source, is_hansung_player
 from .storage import DATA, JobStore
 from .runtime import configure_gpu_runtime
-from .vulkan import VulkanModel, available_devices
+from .whisper_cpp import WhisperCppModel, available_devices
 from .text import Segment, atomic_json, export_transcript, parse_subtitles, safe_name
 
 
@@ -76,7 +77,7 @@ def cookie_jar(cookies):
 
 def ffmpeg_path() -> str:
     import imageio_ffmpeg
-    target = DATA / "tools" / "ffmpeg.exe"
+    target = DATA / "tools" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), target)
@@ -362,7 +363,7 @@ class Transcriber:
                 with wave.open(str(chunk_path), "wb") as chunk:
                     chunk.setparams(audio.getparams())
                     chunk.writeframes(audio.readframes(round((stop - offset) * rate)))
-                backend_options = {"cancel": cancel} if self.actual_device == "vulkan" else {}
+                backend_options = {"cancel": cancel} if self.actual_device in ("vulkan", "metal") else {}
                 iterator, _ = self.model.transcribe(str(chunk_path), language=None if options.language == "auto" else options.language,
                     task="transcribe", vad_filter=True, word_timestamps=True, condition_on_previous_text=False,
                     initial_prompt=options.vocabulary or None, beam_size=5, **backend_options)
@@ -383,7 +384,7 @@ class Transcriber:
                         text = segment.text.strip()
                     if text and end > start:
                         items.append(Segment(start, end, text))
-                    device_label = f"GPU ({self.actual_device.upper()})" if self.actual_device in ("cuda", "vulkan") else "CPU"
+                    device_label = f"GPU ({self.actual_device.upper()})" if self.actual_device in ("cuda", "vulkan", "metal") else "CPU"
                     progress(25 + min(69, int(70 * (offset + segment.end) / duration)), f"음성 인식 · {device_label} · {index + 1}/{count} 구간")
                 checkpoint["chunks"][str(index)] = [asdict(s) for s in items]
                 atomic_json(checkpoint_path, checkpoint)
@@ -401,29 +402,30 @@ class Transcriber:
         from faster_whisper import WhisperModel
         from faster_whisper.utils import download_model
         from huggingface_hub.errors import LocalEntryNotFoundError
-        if options.device not in ("auto", "cuda", "vulkan", "cpu"):
+        if options.device not in ("auto", "cuda", "vulkan", "metal", "cpu"):
             raise ValueError("지원하지 않는 전사 장치입니다.")
         candidates = []
-        if options.device in ("auto", "cuda"):
+        if options.device == "cuda" or (options.device == "auto" and sys.platform == "win32"):
             try:
                 if options.device == "cuda" or ctranslate2.get_cuda_device_count():
                     candidates.append(("cuda", None))
             except RuntimeError as error:
                 progress(25, "CUDA 감지 실패 · 다른 장치를 확인합니다 · " + safe_error(error))
-        if options.device in ("auto", "vulkan"):
-            candidates.extend(("vulkan", device) for device in available_devices())
+        if options.device in ("auto", "vulkan", "metal"):
+            candidates.extend((device.get("backend", "vulkan"), device) for device in available_devices()
+                              if options.device == "auto" or device.get("backend", "vulkan") == options.device)
         if options.device in ("auto", "cpu"):
             candidates.append(("cpu", None))
         if not candidates:
-            raise RuntimeError("사용 가능한 GPU가 없습니다. setup.cmd와 그래픽 드라이버를 확인하세요.")
+            raise RuntimeError("사용 가능한 GPU가 없습니다. 설치 프로그램과 그래픽 드라이버를 확인하세요.")
         # Drop the previous model before loading another large model on the same GPU.
         self.model = None
         self.loaded_key = None
         for device, adapter in candidates:
             try:
-                if device == "vulkan":
-                    progress(25, f"GPU 준비 · {adapter['name']} · Vulkan · {options.model}")
-                    self.model = VulkanModel(options.model, adapter)
+                if device in ("vulkan", "metal"):
+                    progress(25, f"GPU 준비 · {adapter['name']} · {device.upper()} · {options.model}")
+                    self.model = WhisperCppModel(options.model, adapter)
                     compute_type = "float16"
                 else:
                     try:

@@ -74,7 +74,7 @@ function connect() {
     const error = chrome.runtime.lastError?.message;
     if (port !== connected) return;
     port = null;
-    hostError = error ? "로컬 처리기에 연결하지 못했습니다. install-chrome.cmd 실행 후 다시 시도하세요." : "";
+    hostError = error ? "로컬 처리기에 연결하지 못했습니다. 이 OS의 설치 파일을 다시 실행한 뒤 시도하세요." : "";
     for (const job of jobs.values()) {
       if (["running", "queued", "starting"].includes(job.status)) {
         job.status = "interrupted";

@@ -1,9 +1,13 @@
-"""Cross-vendor Windows GPU transcription using a pinned whisper.cpp Vulkan build."""
+"""Shared whisper.cpp adapter: Metal on macOS, Vulkan on Windows/Linux."""
 import hashlib
 import json
 import os
+import platform
 import re
+import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import wave
 import zipfile
@@ -14,41 +18,97 @@ from urllib.request import urlopen
 from .storage import DATA
 
 # Community build of upstream whisper.cpp v1.8.4; source/build provenance is in README.
-RUNTIME_URL = ("https://github.com/jiang1997/whisper.cpp-release/releases/download/v1.8.4.1/"
-               "whisper-1.8.4-windows-x64.zip")
-RUNTIME_SHA256 = "4b1b36343feb55ec3deace6a7dd18cc217f43a55e4ecce76ccd4ee3595c0b642"
-RUNTIME_MEMBER = "whisper-1.8.4-windows-x64/whisper-cli.exe"
-RUNTIME_DIRECTORY = DATA / "tools" / "whisper-vulkan"
+RELEASE_URL = "https://github.com/jiang1997/whisper.cpp-release/releases/download/v1.8.4.1/"
+SOURCE_COMMIT = "9386f239401074690479731c1e41683fbbeac557"
+SOURCE_URL = f"https://codeload.github.com/ggml-org/whisper.cpp/tar.gz/{SOURCE_COMMIT}"
+SOURCE_SHA256 = "0cc49e22729edd3cd2e7727522b456f459e1860fe65e975b39ce1a194857f9d5"
+PACKAGES = {
+    "win32": ("whisper-1.8.4-windows-x64.zip", "4b1b36343feb55ec3deace6a7dd18cc217f43a55e4ecce76ccd4ee3595c0b642"),
+    "linux": ("whisper-1.8.4-linux-x64.tar.gz", "2ae2366da557189abf25310ba004bd6361d4558f8d373fb61cc89cbf0c2a0885"),
+}
+RUNTIME_DIRECTORY = DATA / "tools"
 MODEL_NAMES = {"tiny": "tiny", "small": "small", "medium": "medium",
                "large-v3": "large-v3", "turbo": "large-v3-turbo"}
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def runtime_directory():
+    if sys.platform == "win32" and platform.machine().lower() in ("amd64", "x86_64"):
+        return RUNTIME_DIRECTORY / "whisper-vulkan" / "whisper-1.8.4-windows-x64"
+    if sys.platform == "linux" and platform.machine().lower() in ("amd64", "x86_64"):
+        return RUNTIME_DIRECTORY / "whisper-1.8.4-linux-x64"
+    if sys.platform == "darwin":
+        return RUNTIME_DIRECTORY / f"whisper-metal-1.8.4-{platform.machine().lower()}"
+    return None
+
+
 def executable():
-    return RUNTIME_DIRECTORY / RUNTIME_MEMBER
+    directory = runtime_directory()
+    return directory / ("whisper-cli.exe" if sys.platform == "win32" else "whisper-cli") if directory else None
+
+
+def download_verified(url, digest):
+    archive = tempfile.TemporaryFile()
+    try:
+        with urlopen(url, timeout=60) as response:
+            actual = hashlib.sha256()
+            while block := response.read(1024 * 1024):
+                archive.write(block)
+                actual.update(block)
+        if actual.hexdigest() != digest:
+            raise RuntimeError("GPU runtime checksum mismatch")
+        archive.seek(0)
+        return archive
+    except BaseException:
+        archive.close()
+        raise
 
 
 def install_runtime():
-    """Download only the pinned CLI, checking its archive before extraction."""
-    if executable().is_file():
+    """Provision a native engine for this OS/architecture without emulation."""
+    target = executable()
+    if target is None:
+        print("No packaged GPU engine for this platform; CPU remains available.")
+        return
+    if target.is_file():
         return
     RUNTIME_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryFile() as archive:
-        with urlopen(RUNTIME_URL, timeout=60) as response:
-            digest = hashlib.sha256()
-            while block := response.read(1024 * 1024):
-                archive.write(block)
-                digest.update(block)
-        if digest.hexdigest() != RUNTIME_SHA256:
-            raise RuntimeError("Vulkan runtime checksum mismatch")
-        archive.seek(0)
-        with zipfile.ZipFile(archive) as zipped:
-            # Extract one known member; do not trust arbitrary archive paths.
-            target = executable()
+    if sys.platform == "darwin":
+        # Build upstream Metal on BOTH Apple Silicon and Intel Macs. The published
+        # community Intel Mac binary disables Metal, so it cannot satisfy auto GPU.
+        subprocess.run(["xcrun", "--find", "clang"], check=True, capture_output=True)
+        from cmake import CMAKE_BIN_DIR
+        cmake = str(Path(CMAKE_BIN_DIR) / "cmake")
+        with download_verified(SOURCE_URL, SOURCE_SHA256) as archive, \
+                tempfile.TemporaryDirectory(prefix="lecture-metal-") as temporary:
+            root = Path(temporary)
+            with tarfile.open(fileobj=archive, mode="r:gz") as source:
+                source.extractall(root, filter="data")
+            build = root / "build"
+            subprocess.run([cmake, "-S", str(root / f"whisper.cpp-{SOURCE_COMMIT}"), "-B", str(build),
+                "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", "-DGGML_METAL=ON",
+                "-DGGML_METAL_EMBED_LIBRARY=ON", "-DGGML_NATIVE=OFF", "-DGGML_BLAS=OFF",
+                "-DWHISPER_COREML=OFF", "-DWHISPER_BUILD_TESTS=OFF"], check=True)
+            subprocess.run([cmake, "--build", str(build), "--target", "whisper-cli", "--config", "Release",
+                            "-j", str(min(8, os.cpu_count() or 4))], check=True)
             target.parent.mkdir(parents=True, exist_ok=True)
-            partial = target.with_suffix(".partial")
-            partial.write_bytes(zipped.read(RUNTIME_MEMBER))
+            partial = target.with_name("whisper-cli.partial")
+            shutil.copy2(build / "bin" / "whisper-cli", partial)
+            partial.chmod(0o755)
             partial.replace(target)
+        return
+    filename, digest = PACKAGES[sys.platform]
+    with download_verified(RELEASE_URL + filename, digest) as archive:
+        if sys.platform == "win32":
+            with zipfile.ZipFile(archive) as zipped:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                partial = target.with_suffix(".partial")
+                partial.write_bytes(zipped.read("whisper-1.8.4-windows-x64/whisper-cli.exe"))
+                partial.replace(target)
+        else:
+            with tarfile.open(fileobj=archive, mode="r:gz") as source:
+                source.extractall(RUNTIME_DIRECTORY, filter="data")
+            target.chmod(0o755)
 
 
 def parse_devices(log):
@@ -57,13 +117,16 @@ def parse_devices(log):
         name = match[2].strip()
         if any(software in name.lower() for software in ("llvmpipe", "lavapipe", "swiftshader", "software")):
             continue
-        devices.append({"index": int(match[1]), "name": name, "integrated": match[3] == "1"})
+        devices.append({"index": int(match[1]), "name": name, "integrated": match[3] == "1", "backend": "vulkan"})
+    for match in re.finditer(r"ggml_metal_device_init:\s*GPU name:\s*MTL(\d+)", log):
+        devices.append({"index": int(match[1]), "name": f"Metal GPU {match[1]}", "integrated": True, "backend": "metal"})
     # Prefer dedicated graphics, irrespective of vendor. Keep the CLI's device IDs.
     return sorted(devices, key=lambda device: (device["integrated"], device["index"]))
 
 
 def available_devices():
-    if os.name != "nt" or not executable().is_file():
+    cli = executable()
+    if cli is None or not cli.is_file():
         return []
     try:
         with tempfile.TemporaryDirectory(prefix="lecture-gpu-probe-") as directory:
@@ -83,7 +146,7 @@ def available_devices():
         return []
 
 
-class VulkanModel:
+class WhisperCppModel:
     def __init__(self, model, device):
         from huggingface_hub import hf_hub_download
         self.device = device
@@ -136,9 +199,11 @@ class VulkanModel:
                         process.communicate()
                 log = stderr.decode("utf-8", "replace")
                 if process.returncode:
-                    raise RuntimeError("Vulkan 전사 실패: " + log[-1000:])
-                if f"using Vulkan{self.device['index']} backend" not in log:
-                    raise RuntimeError("Vulkan GPU가 실제로 활성화되지 않았습니다.")
+                    raise RuntimeError("GPU 전사 실패: " + log[-1000:])
+                backend = "MTL" if self.device.get("backend") == "metal" else "Vulkan"
+                expected = f"{backend}{self.device['index']} backend"
+                if f"using {expected}" not in log or f"failed to initialize {expected}" in log:
+                    raise RuntimeError("GPU가 실제로 활성화되지 않았습니다.")
                 payload = json.loads(output_path.with_suffix(".json").read_text(encoding="utf-8"))
                 words = []
                 for item in payload["transcription"]:

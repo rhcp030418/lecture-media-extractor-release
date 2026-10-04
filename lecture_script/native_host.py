@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from .browser import Source, media_kind
 from .pipeline import Cancelled, Options, Transcriber, completed_outputs, job_identity, process_source, safe_error, validate_outputs
 from .storage import DATA, DEFAULT_OUTPUT, JobStore
+from .runtime import open_path
 
 MAX_MESSAGE = 1024 * 1024
 
@@ -124,7 +125,7 @@ class Host:
                     cancel.set()
         elif command == "open_output":
             self.output.mkdir(parents=True, exist_ok=True)
-            os.startfile(self.output)
+            open_path(self.output)
         else:
             raise ValueError("지원하지 않는 요청입니다.")
 

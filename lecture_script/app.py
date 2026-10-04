@@ -17,7 +17,7 @@ from .storage import DATA, DEFAULT_OUTPUT, ROOT, JobStore
 
 STYLE = """
 QMainWindow, QWidget#root { background:#f4f7fb; color:#1c304b; }
-QWidget { color:#1c304b; font-family:'Malgun Gothic'; font-size:13px; }
+QWidget { color:#1c304b; font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; font-size:13px; }
 QLabel#heading { font-size:28px; font-weight:700; }
 QLabel#muted { color:#697d96; }
 QLabel#banner { background:#e7efff; color:#20488e; padding:18px; border-radius:12px; }
@@ -57,7 +57,7 @@ class Window(QMainWindow):
         font = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf"
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
-        QApplication.instance().setFont(QFont("Malgun Gothic", 10))
+        QApplication.instance().setFont(QFont("Apple SD Gothic Neo" if sys.platform == "darwin" else "Malgun Gothic", 10))
         palette = QPalette(QColor("#f4f7fb"))
         for role, color in ((QPalette.ColorRole.WindowText, "#1c304b"), (QPalette.ColorRole.Text, "#1c304b"),
                             (QPalette.ColorRole.Base, "#ffffff"), (QPalette.ColorRole.ButtonText, "#1c304b"),

@@ -15,8 +15,8 @@ class GpuInstallationTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.install_vulkan = self.stack.enter_context(patch("lecture_script.vulkan.install_runtime"))
-        self.vulkan_devices = self.stack.enter_context(patch("lecture_script.vulkan.available_devices", return_value=[]))
+        self.install_vulkan = self.stack.enter_context(patch("lecture_script.whisper_cpp.install_runtime"))
+        self.vulkan_devices = self.stack.enter_context(patch("lecture_script.whisper_cpp.available_devices", return_value=[]))
 
     def test_detected_gpu_installs_runtime_in_current_python(self):
         with patch("ctranslate2.get_cuda_device_count", return_value=1), \
@@ -62,10 +62,11 @@ class GpuSelectionTests(unittest.TestCase):
         for name in ("model.bin", "config.json", "tokenizer.json"):
             (self.directory / name).touch()
         self.stack.enter_context(patch("lecture_script.pipeline.configure_gpu_runtime"))
+        self.stack.enter_context(patch("lecture_script.pipeline.sys.platform", "win32"))
         self.stack.enter_context(patch("faster_whisper.utils.download_model", return_value=str(self.directory)))
         self.count = self.stack.enter_context(patch("ctranslate2.get_cuda_device_count", return_value=1))
         self.devices = self.stack.enter_context(patch("lecture_script.pipeline.available_devices", return_value=[]))
-        self.vulkan = self.stack.enter_context(patch("lecture_script.pipeline.VulkanModel"))
+        self.vulkan = self.stack.enter_context(patch("lecture_script.pipeline.WhisperCppModel"))
         self.model = MagicMock()
         self.model.transcribe.return_value = (iter(()), None)
         self.factory = self.stack.enter_context(patch("faster_whisper.WhisperModel", return_value=self.model))
@@ -141,6 +142,27 @@ class GpuSelectionTests(unittest.TestCase):
         self.engine._load(Options(self.directory, device="cpu"), self.progress)
         self.count.assert_not_called()
         self.devices.assert_not_called()
+        self.assertEqual(self.engine.actual_device, "cpu")
+
+    def test_mac_auto_selects_metal_and_never_probes_cuda(self):
+        self.devices.return_value = [{"name": "Metal GPU 0", "index": 0, "backend": "metal"}]
+        self.vulkan.return_value.transcribe.return_value = (iter(()), None)
+        with patch("lecture_script.pipeline.sys.platform", "darwin"):
+            self.engine._load(Options(self.directory), self.progress)
+        self.count.assert_not_called()
+        self.assertEqual(self.engine.actual_device, "metal")
+        self.assertIn("GPU (METAL)", self.progress.call_args.args[1])
+
+    def test_mac_without_metal_falls_back_to_cpu(self):
+        with patch("lecture_script.pipeline.sys.platform", "darwin"):
+            self.engine._load(Options(self.directory), self.progress)
+        self.assertEqual(self.engine.actual_device, "cpu")
+
+    def test_failed_metal_inference_falls_back_to_cpu(self):
+        self.devices.return_value = [{"name": "Metal GPU 0", "index": 0, "backend": "metal"}]
+        self.vulkan.side_effect = RuntimeError("Metal unavailable")
+        with patch("lecture_script.pipeline.sys.platform", "darwin"):
+            self.engine._load(Options(self.directory), self.progress)
         self.assertEqual(self.engine.actual_device, "cpu")
 
     def test_explicit_gpu_failure_is_not_silently_sent_to_cpu(self):

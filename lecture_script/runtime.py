@@ -1,4 +1,4 @@
-"""Make this app's optional NVIDIA DLLs visible to CTranslate2 on Windows."""
+"""OS integration and installation of the available GPU runtimes."""
 import os
 import subprocess
 import sys
@@ -31,15 +31,17 @@ def configure_gpu_runtime():
 
 
 def install_gpu_runtime():
-    """Provision cross-vendor Vulkan and, where supported, the CUDA fast path."""
-    if os.name != "nt":
-        return False
-    from .vulkan import install_runtime, available_devices
-    print("Installing cross-vendor Vulkan runtime (AMD / Intel / NVIDIA)...", flush=True)
+    """Provision native Metal/Vulkan and the CUDA fast path where supported."""
+    from .whisper_cpp import install_runtime, available_devices
+    backend = "Metal" if sys.platform == "darwin" else "Vulkan"
+    print(f"Installing native {backend} GPU runtime...", flush=True)
     install_runtime()
     devices = available_devices()
     for device in devices:
-        print(f"Vulkan GPU: {device['name']}")
+        print(f"{backend} GPU: {device['name']}")
+    if sys.platform != "win32":
+        print(f"{backend} GPU ready." if devices else "No supported GPU detected. CPU is available.")
+        return bool(devices)
     import ctranslate2
     try:
         count = ctranslate2.get_cuda_device_count()
@@ -55,6 +57,15 @@ def install_gpu_runtime():
                     "--disable-pip-version-check"], check=True)
     print("GPU runtimes installed. Transcription selects an available GPU automatically.")
     return True
+
+
+def open_path(path):
+    """Open a local folder/document without exposing Chrome's protocol streams."""
+    if sys.platform == "win32":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
