@@ -33,6 +33,13 @@ class GpuInstallationTests(unittest.TestCase):
             self.assertFalse(runtime.install_gpu_runtime())
         run.assert_not_called()
 
+    def test_vulkan_install_failure_still_attempts_cuda(self):
+        self.install_vulkan.side_effect = OSError("Vulkan download unavailable")
+        with patch("ctranslate2.get_cuda_device_count", return_value=1), \
+                patch.object(runtime.subprocess, "run") as run:
+            self.assertTrue(runtime.install_gpu_runtime())
+        run.assert_called_once()
+
     def test_non_cuda_gpu_uses_vulkan_without_cuda_packages(self):
         for name in ("AMD Radeon", "Intel Arc", "Future GPU"):
             with self.subTest(name=name), patch("ctranslate2.get_cuda_device_count", return_value=0), \

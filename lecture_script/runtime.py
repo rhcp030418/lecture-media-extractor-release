@@ -35,7 +35,12 @@ def install_gpu_runtime():
     from .whisper_cpp import install_runtime, available_devices
     backend = "Metal" if sys.platform == "darwin" else "Vulkan"
     print(f"Installing native {backend} GPU runtime...", flush=True)
-    install_runtime()
+    try:
+        install_runtime()
+    except Exception as error:
+        if sys.platform != "win32":
+            raise
+        print(f"Vulkan setup failed; still checking CUDA: {error}", flush=True)
     devices = available_devices()
     for device in devices:
         print(f"{backend} GPU: {device['name']}")
