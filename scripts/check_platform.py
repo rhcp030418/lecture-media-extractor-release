@@ -1,6 +1,7 @@
-"""CI smoke test on real macOS/Linux runners; no school login or private media."""
+"""Real installer/host/transcription smoke test; optional installed project path."""
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,7 @@ import threading
 from pathlib import Path
 from urllib.request import urlretrieve
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import install_chrome
@@ -27,7 +28,8 @@ def main():
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     request = io.BytesIO()
     write_message(request, {"command": "hello"})
-    result = subprocess.run([manifest["path"]], input=request.getvalue(), capture_output=True, timeout=30)
+    command = [os.environ["COMSPEC"], "/d", "/c", manifest["path"]] if sys.platform == "win32" else [manifest["path"]]
+    result = subprocess.run(command, input=request.getvalue(), capture_output=True, timeout=30)
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
     assert read_message(io.BytesIO(result.stdout))["type"] == "ready"
     print("Installed Chrome native host handshake passed", flush=True)
@@ -45,10 +47,13 @@ def main():
         text = " ".join(segment["text"] for segment in result["payload"]["segments"]).lower()
         assert "country" in text, text
         if devices:
-            assert engine.actual_device in {device["backend"] for device in devices}, engine.actual_device
+            expected = {device["backend"] for device in devices}
+            if sys.platform == "win32":
+                expected.add("cuda")
+            assert engine.actual_device in expected, engine.actual_device
         else:
             # A cold driver may become available between discovery and transcription.
-            allowed = {"cpu", "metal"} if sys.platform == "darwin" else {"cpu", "vulkan"}
+            allowed = {"cpu", "metal"} if sys.platform == "darwin" else {"cpu", "vulkan", "cuda"}
             assert engine.actual_device in allowed, engine.actual_device
         print(f"Real transcription/export passed: {engine.actual_device}", flush=True)
         if engine.actual_device == "cpu":

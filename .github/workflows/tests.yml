@@ -63,3 +63,20 @@ jobs:
           .venv/bin/python scripts/check_platform.py
       - name: Test capture, native messages, resume, and exports
         run: python -m unittest discover -s tests -v
+      - name: Install the Windows ZIP with a private Python
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          python scripts/build_windows_zip.py
+          Expand-Archive -LiteralPath dist/Lecture-Script-Windows-0.5.1.zip -DestinationPath 'work/windows zip'
+          $lectureInstall = Join-Path $env:RUNNER_TEMP 'Lecture Script installed'
+          & '.\work\windows zip\Lecture-Script-Windows\install-windows.ps1' -InstallDir $lectureInstall -NoOpen
+          $env:PYTHONUTF8 = '1'
+          & (Join-Path $lectureInstall '.venv\Scripts\python.exe') scripts/check_platform.py $lectureInstall
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Windows application smoke test failed.' }
+      - name: Save Windows share ZIP
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lecture-Script-Windows
+          path: dist/Lecture-Script-Windows-0.5.1.zip

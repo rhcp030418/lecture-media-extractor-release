@@ -8,7 +8,13 @@ Chrome에서 한성 eClass 강의 창을 열면 확장에서 체크한 **MP4 영
 
 ### 처음 설치
 
-1. **Python 3.12**를 설치합니다. Windows에서는 Python 실행기(`py`)를 포함하고, Mac에서는 칩에 맞는 Python을 사용합니다.
+Windows 친구에게 공유할 때는 **`Lecture-Script-Windows-0.5.1.zip`**을 전달합니다. 압축을 전부 풀고 **`START-HERE.cmd`**를 실행하면 `%LOCALAPPDATA%\LectureScript`에 프로그램을 복사하고, 전용 Python·pip 패키지·GPU 처리기·Chrome Native Messaging 연결을 준비합니다. Chrome이 없으면 Google의 서명을 확인한 공식 설치 프로그램을 실행합니다. 설치 후 확장 관리 화면과 실제 폴더 경로를 복사할 수 있는 한국어 안내를 엽니다.
+
+일반 Windows Chrome에서 스토어 미등록 확장은 **개발자 모드 → 압축해제된 확장 로드 → 안내된 `extension` 폴더 선택**을 한 번 직접 해야 합니다. 설치 프로그램은 Chrome 프로필이나 기업 정책을 변경하지 않습니다. 이 설치판은 Windows 10/11 64비트용이며 인터넷 연결이 필요합니다. 설치된 앱 폴더를 유지하면 받은 ZIP과 압축을 푼 폴더는 정리할 수 있습니다. 바탕화면의 `Lecture Script - Chrome setup`으로 안내를 다시 엽니다.
+
+소스에서 직접 설치하거나 다른 OS를 사용할 때:
+
+1. Mac·Linux는 **Python 3.12**를 설치합니다. Mac에서는 칩에 맞는 Python을 사용합니다. Windows 설치 파일은 전용 Python을 자동으로 준비합니다.
 2. 이 저장소를 내려받아 압축을 풀고 아래 설치 파일을 실행합니다. OS와 아키텍처에 맞는 처리기를 준비하고 현재 사용자에게 Chrome 연결을 등록합니다.
 3. Chrome에서 `chrome://extensions`를 열고 **개발자 모드 → 압축해제된 확장 프로그램을 로드합니다**를 누릅니다.
 4. 이 저장소의 **`extension`** 폴더를 선택합니다.
@@ -23,6 +29,8 @@ Chrome에서 한성 eClass 강의 창을 열면 확장에서 체크한 **MP4 영
 Mac의 Metal 처리기는 Apple Command Line Tools가 필요합니다. 없다면 터미널에서 `xcode-select --install`로 설치한 뒤 `setup.command`를 다시 실행하세요. 설치 중 GPU 준비에 실패해도 CPU용 설치와 Chrome 연결은 진행하며, 실패 원인을 표시합니다. `.command` 실행 권한이 없다면 터미널에서 `sh setup.command`로 실행할 수 있습니다. Linux GPU에는 그래픽 드라이버와 Vulkan 로더가 필요합니다.
 
 설치 화면 안내: [install-guide.html](install-guide.html). 앱의 사용자별 Chrome 등록에는 관리자 권한이 필요하지 않습니다. 프로젝트 폴더를 옮기면 Windows는 `install-chrome.cmd`, Mac은 `install-chrome.command`, Linux는 `.venv/bin/python install_chrome.py`로 다시 등록하고 확장도 새 경로에서 다시 로드합니다.
+
+Windows ZIP은 `python scripts/build_windows_zip.py`로 만듭니다. 앱·확장·설치 파일만 포함하며, `.venv`, 모델, 강의 파일, 로그, Git 기록은 포함하지 않습니다. Windows의 Python 자동 준비에는 고정 릴리스와 SHA-256을 검증한 [uv 0.12.23](https://github.com/astral-sh/uv/releases/tag/0.12.23) 및 [python-build-standalone](https://docs.astral.sh/uv/guides/install-python/)을 사용합니다. Python은 앱의 `data/python`에 설치하고, 필요한 패키지는 해당 가상환경의 `pip`로 설치합니다. GUI 의존성은 사용하는 Qt 모듈이 포함된 PySide6-Essentials로 제한합니다.
 
 **이전 버전에서 업데이트할 때도 해당 OS의 설치 파일을 다시 실행하세요.** GPU 처리기와 Chrome 연결을 함께 갱신한 뒤 확장을 새로고침합니다.
 
