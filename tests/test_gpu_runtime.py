@@ -62,7 +62,6 @@ class GpuSelectionTests(unittest.TestCase):
         for name in ("model.bin", "config.json", "tokenizer.json"):
             (self.directory / name).touch()
         self.stack.enter_context(patch("lecture_script.pipeline.configure_gpu_runtime"))
-        self.stack.enter_context(patch("lecture_script.pipeline.sys.platform", "win32"))
         self.stack.enter_context(patch("faster_whisper.utils.download_model", return_value=str(self.directory)))
         self.count = self.stack.enter_context(patch("ctranslate2.get_cuda_device_count", return_value=1))
         self.devices = self.stack.enter_context(patch("lecture_script.pipeline.available_devices", return_value=[]))
@@ -70,6 +69,8 @@ class GpuSelectionTests(unittest.TestCase):
         self.model = MagicMock()
         self.model.transcribe.return_value = (iter(()), None)
         self.factory = self.stack.enter_context(patch("faster_whisper.WhisperModel", return_value=self.model))
+        # Load native dependencies on the real OS before simulating Windows selection.
+        self.stack.enter_context(patch("lecture_script.pipeline.sys.platform", "win32"))
         self.engine = Transcriber()
         self.progress = MagicMock()
 

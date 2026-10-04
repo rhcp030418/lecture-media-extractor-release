@@ -22,7 +22,7 @@ from lecture_script.whisper_cpp import SOURCE_COMMIT, available_devices, executa
 def main():
     cli = executable()
     assert cli and cli.is_file(), "Platform GPU engine was not installed/built"
-    subprocess.run([str(cli), "--version"], check=True, timeout=30)
+    subprocess.run([str(cli), "--help"], check=True, capture_output=True, timeout=30)
     manifest_path = install_chrome.manifest_directory() / f"{NATIVE_HOST_NAME}.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     request = io.BytesIO()

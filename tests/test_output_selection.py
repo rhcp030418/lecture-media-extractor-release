@@ -75,7 +75,7 @@ class OutputSelectionTests(unittest.TestCase):
                     self.assertTrue(self.video.is_file())
 
     def test_later_selections_reuse_saved_video_and_keep_previous_exports(self):
-        source = Source("https://cdn.example.test/lecture.mp4?token=private", "media", "Lecture", course="Course")
+        source = Source("https://cdn.example.test/lecture.mp4?token=secret-token-fixture", "media", "Lecture", course="Course")
         def download(_source, work, *_args):
             media = work / "source.mp4"
             media.write_bytes(self.video.read_bytes())
@@ -100,7 +100,7 @@ class OutputSelectionTests(unittest.TestCase):
         options.outputs = ("script",)
         self.assertIsNotNone(completed_outputs(source, options))
         manifest = next((self.root / "Course" / ".jobs").glob("*.json"))
-        self.assertNotIn("private", manifest.read_text())
+        self.assertNotIn("secret-token-fixture", manifest.read_text())
 
     def test_native_host_rejects_invalid_selection_without_reserving_job(self):
         messages = []

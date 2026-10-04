@@ -12,6 +12,18 @@ from lecture_script.storage import JobStore
 
 
 class AudioStageTests(unittest.TestCase):
+    def test_installed_transcription_decoder_accepts_real_wav(self):
+        from faster_whisper.audio import decode_audio
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "speech.wav"
+            with wave.open(str(source), "wb") as audio:
+                audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                audio.writeframes(b"\0\0" * 16000)
+            samples = decode_audio(str(source), sampling_rate=16000)
+            self.assertEqual(samples.shape, (16000,))
+            self.assertTrue((samples == 0).all())
+
     def test_audio_batch_saves_reopenable_file_without_loading_stt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
