@@ -35,7 +35,15 @@ Windows와 Chrome에서 한성 eClass 강의 창을 열면 확장에서 체크�
 
 자동 시작은 `https://learn.hansung.ac.kr/mod/vod/viewer.php?id=...`에 적용됩니다. 다른 사이트에서는 확장의 **선택한 파일 다운로드 / 재시도**를 사용할 수 있습니다. MP4, HLS, DASH 감지는 플레이어 방식에 따라 달라집니다. 자동 처리 확장은 다른 강의를 직접 열거나 과목 목록을 순회하지 않습니다.
 
-음성 인식은 로컬에서 실행하고, 모델은 처음 사용할 때 내려받습니다. 기본 설치는 CPU에서 사용할 수 있습니다. NVIDIA GPU용 선택 패키지는 다음 명령으로 설치합니다. GPU 초기화에 실패하면 자동 모드에서 CPU로 전환합니다.
+음성 인식은 로컬에서 실행하고, 모델은 처음 사용할 때 내려받습니다. **`setup.cmd`가 Windows x64용 Vulkan 처리기를 설치하고 AMD·Intel·NVIDIA 등 사용 가능한 GPU를 감지합니다.** CUDA를 지원하는 장치가 있으면 CUDA 실행 라이브러리도 설치합니다. 기존 CPU 설치에서 GPU를 활성화할 때도 `setup.cmd`를 다시 실행하면 됩니다. 설치 후 이미 실행 중인 확장은 `chrome://extensions`에서 새로고침합니다.
+
+전사는 실제 실행 가능한 GPU를 자동으로 우선 사용합니다. CUDA → Vulkan GPU들 → CPU 순서로 시도하며, Vulkan에서는 제조사와 관계없이 외장 GPU를 내장 GPU보다 먼저 시도합니다. 감지 후 짧은 추론까지 성공해야 GPU로 표시하며, 실패 원인을 표시한 뒤 다음 장치를 시도합니다. 진행 상황에는 `음성 인식 · GPU (CUDA)` 또는 `GPU (VULKAN)`이 표시됩니다. GPU가 없거나 모두 초기화에 실패하면 CPU로 처리합니다.
+
+모델 크기는 사용자가 선택한 값을 유지하며, GPU 사용률에 따라 모델을 실시간 변경하지 않습니다. MP4 저장과 MP3 변환은 별도 작업이므로 이 단계에서는 GPU 사용량이 낮을 수 있습니다. Vulkan GPU는 드라이버의 Vulkan 지원이 필요합니다. CUDA와 Vulkan 모델은 형식이 달라 각각 처음 사용할 때 다운로드하며, 모델은 Git에 포함하지 않습니다.
+
+Vulkan 처리기는 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)의 [Windows 커뮤니티 빌드 v1.8.4.1](https://github.com/jiang1997/whisper.cpp-release/releases/tag/v1.8.4.1)를 사용합니다. 공식 upstream 바이너리가 아닌 점을 명시하며, 공개된 빌드 워크플로와 고정된 릴리스 URL을 사용하고 ZIP의 SHA-256을 검증한 후 CLI만 추출합니다. 자동 GPU 설치는 이 프로젝트의 Windows x64 설치 경로에 적용됩니다.
+
+CUDA 패키지만 수동으로 설치하려면 다음 명령을 사용합니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-gpu.txt

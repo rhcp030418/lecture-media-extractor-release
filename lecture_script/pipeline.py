@@ -20,6 +20,7 @@ from PySide6.QtCore import QThread, Signal
 from .browser import Source, is_hansung_player
 from .storage import DATA, JobStore
 from .runtime import configure_gpu_runtime
+from .vulkan import VulkanModel, available_devices
 from .text import Segment, atomic_json, export_transcript, parse_subtitles, safe_name
 
 
@@ -37,7 +38,7 @@ def safe_error(error) -> str:
     if any(code in text for code in ("401", "403")):
         return "접근 권한 또는 주소 만료 오류입니다. 브라우저에서 강의를 다시 열고 새로 감지된 소스로 재시도하세요."
     if any(name in text.lower() for name in ("cublas", "cudnn", "cuda driver")):
-        return "GPU 실행 라이브러리를 사용할 수 없습니다. 장치를 '자동' 또는 'CPU'로 선택해 다시 실행하세요."
+        return "GPU 실행 라이브러리를 사용할 수 없습니다. setup.cmd를 다시 실행하고 NVIDIA 드라이버를 확인하세요."
     text = re.sub(r"https?://[^\s'\"<>]+", "[미디어 주소]", text)
     text = re.sub(r"(?i)(authorization|cookie|token|signature)\s*[:=]\s*\S+", r"\1=[숨김]", text)
     return text[-700:] or type(error).__name__
@@ -330,7 +331,7 @@ class Transcriber:
                 digest.update(block)
         config = {"audio_sha256": digest.hexdigest(), "model": options.model, "device": options.device,
                   "language": options.language, "vocabulary": options.vocabulary,
-                  "engine": version("faster-whisper"), "chunk_seconds": 300, "pipeline_version": 1}
+                  "engine": version("faster-whisper"), "chunk_seconds": 300, "pipeline_version": 2}
         cache_key = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
         checkpoint_path = work / "checkpoint.json"
         checkpoint = {"key": cache_key, "chunks": {}}
@@ -361,9 +362,10 @@ class Transcriber:
                 with wave.open(str(chunk_path), "wb") as chunk:
                     chunk.setparams(audio.getparams())
                     chunk.writeframes(audio.readframes(round((stop - offset) * rate)))
+                backend_options = {"cancel": cancel} if self.actual_device == "vulkan" else {}
                 iterator, _ = self.model.transcribe(str(chunk_path), language=None if options.language == "auto" else options.language,
                     task="transcribe", vad_filter=True, word_timestamps=True, condition_on_previous_text=False,
-                    initial_prompt=options.vocabulary or None, beam_size=5)
+                    initial_prompt=options.vocabulary or None, beam_size=5, **backend_options)
                 items = []
                 for segment in iterator:
                     check_cancel(cancel)
@@ -381,7 +383,7 @@ class Transcriber:
                         text = segment.text.strip()
                     if text and end > start:
                         items.append(Segment(start, end, text))
-                    device_label = "GPU" if self.actual_device == "cuda" else "CPU"
+                    device_label = f"GPU ({self.actual_device.upper()})" if self.actual_device in ("cuda", "vulkan") else "CPU"
                     progress(25 + min(69, int(70 * (offset + segment.end) / duration)), f"음성 인식 · {device_label} · {index + 1}/{count} 구간")
                 checkpoint["chunks"][str(index)] = [asdict(s) for s in items]
                 atomic_json(checkpoint_path, checkpoint)
@@ -399,35 +401,59 @@ class Transcriber:
         from faster_whisper import WhisperModel
         from faster_whisper.utils import download_model
         from huggingface_hub.errors import LocalEntryNotFoundError
-        try:
-            model_path = download_model(options.model, cache_dir=str(DATA / "models"), local_files_only=True)
-            if not all((Path(model_path) / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json")):
-                model_path = options.model
-        except LocalEntryNotFoundError:
-            model_path = options.model
-        device = options.device
-        if device == "auto":
-            device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
-        kwargs = {"device": device, "compute_type": "int8" if device == "cpu" else "float16",
-                  "download_root": str(DATA / "models"), "cpu_threads": min(8, os.cpu_count() or 4)}
-        try:
-            self.model = WhisperModel(model_path, **kwargs)
-            if options.device == "auto" and device == "cuda":
-                # CUDA libraries may load only on first inference, after construction succeeds.
-                import numpy as np
-                probe, _ = self.model.transcribe(np.zeros(16000, dtype=np.float32), language="ko", vad_filter=False, beam_size=1)
-                next(probe, None)
-        except Exception:
-            if options.device != "auto" or device == "cpu":
-                raise
-            progress(25, "GPU 초기화 실패 · CPU로 전환합니다")
-            kwargs.update(device="cpu", compute_type="int8")
-            self.model = WhisperModel(model_path, **kwargs)
-            device = "cpu"
-        self.actual_device = device
-        self.compute_type = kwargs["compute_type"]
-        progress(25, f"음성 모델 준비 완료 · {'NVIDIA GPU' if device == 'cuda' else 'CPU'} · {options.model}")
-        self.loaded_key = key
+        if options.device not in ("auto", "cuda", "vulkan", "cpu"):
+            raise ValueError("지원하지 않는 전사 장치입니다.")
+        candidates = []
+        if options.device in ("auto", "cuda"):
+            try:
+                if options.device == "cuda" or ctranslate2.get_cuda_device_count():
+                    candidates.append(("cuda", None))
+            except RuntimeError as error:
+                progress(25, "CUDA 감지 실패 · 다른 장치를 확인합니다 · " + safe_error(error))
+        if options.device in ("auto", "vulkan"):
+            candidates.extend(("vulkan", device) for device in available_devices())
+        if options.device in ("auto", "cpu"):
+            candidates.append(("cpu", None))
+        if not candidates:
+            raise RuntimeError("사용 가능한 GPU가 없습니다. setup.cmd와 그래픽 드라이버를 확인하세요.")
+        # Drop the previous model before loading another large model on the same GPU.
+        self.model = None
+        self.loaded_key = None
+        for device, adapter in candidates:
+            try:
+                if device == "vulkan":
+                    progress(25, f"GPU 준비 · {adapter['name']} · Vulkan · {options.model}")
+                    self.model = VulkanModel(options.model, adapter)
+                    compute_type = "float16"
+                else:
+                    try:
+                        model_path = download_model(options.model, cache_dir=str(DATA / "models"), local_files_only=True)
+                        if not all((Path(model_path) / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json")):
+                            model_path = options.model
+                    except LocalEntryNotFoundError:
+                        model_path = options.model
+                    compute_type = "int8" if device == "cpu" else "float16"
+                    self.model = WhisperModel(model_path, device=device, compute_type=compute_type,
+                        download_root=str(DATA / "models"), cpu_threads=min(8, os.cpu_count() or 4))
+                if device != "cpu":
+                    # Confirm inference, not just device enumeration or model construction.
+                    import numpy as np
+                    probe, _ = self.model.transcribe(np.zeros(16000, dtype=np.float32), language="ko", vad_filter=False, beam_size=1)
+                    list(probe)
+            except Exception as error:
+                self.model = None
+                if options.device != "auto" or device == "cpu":
+                    raise
+                progress(25, f"{device.upper()} 초기화 실패 · 다음 장치로 전환 · " + safe_error(error))
+                continue
+            self.actual_device = device
+            self.compute_type = compute_type
+            label = f"GPU ({device.upper()})" if device != "cpu" else "CPU"
+            if adapter:
+                label += f" · {adapter['name']}"
+            progress(25, f"음성 모델 준비 완료 · {label} · {options.model}")
+            self.loaded_key = key
+            return
 
 
 def process_source(source, options, transcriber, cancel, progress, store=None):
